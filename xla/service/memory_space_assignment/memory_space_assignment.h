@@ -1367,11 +1367,11 @@ class MemoryBoundednessBufferIntervalComparator
  private:
   // See the value returned by DescribeComparisonCriteria() for the meaning of
   // each tuple element.
-  using ComparisonTuple =
-      std::tuple<float, int64_t, int64_t, int64_t, int64_t, BufferValue::Id>;
+  using ComparisonTuple = std::tuple<int64_t, float, int64_t, int64_t, int64_t,
+                                     int64_t, BufferValue::Id>;
 
   ComparisonTuple GetTuple(const BufferInterval& buffer_interval);
-
+  int64_t GetLatestUseTime(const BufferInterval& buffer_interval);
   absl::flat_hash_map<const HloValue*, int64_t> buffer_to_latest_use_;
   const MemorySpaceAssignmentCostAnalysis& cost_analysis_;
   MemorySpaceAssignmentCostAnalysis::Cache* cost_analysis_cache_;
@@ -1408,88 +1408,6 @@ class DefaultCrossProgramPrefetchBufferIntervalComparator
   absl::flat_hash_map<const HloValue*, AdditionalSortData>
       additional_sort_data_;
   const HloLiveRange& hlo_live_range_;
-};
-
-// Filters prefetches by matching against multiple filters and overrides the
-// preferred prefetch time for matching prefetches by the provided override
-// strategy.
-class FilterUpdatePreferredPrefetch {
- public:
-  // Supported filters for prefetch filtering by operand size, instruction name,
-  // operand number and operand index matching.
-  enum class FilterType {
-    OP_SIZE_LTE,  // sting value: op_size_lte, filter value type: integer
-    OP_SIZE_GTE,  // sting value: op_size_gte, filter value type: integer
-    INSTRUCTION_NAME_EXACT,  // sting value: instruction_name_exact,
-                             // filter value type: string
-    OP_NUMBER_EXACT,         // sting value: op_number_exact,
-                             // filter value type: integer
-    OP_INDEX_EXACT  // sting value: op_index_exact, filter value type: string
-                    // (empty string for {}, 1 for {1} and 1#2 for {1,2})
-  };
-  // Strategies to compute new perferred prefetch time. Prefetch eagerness
-  // sets prefetch time to a time within the live-range depending on a value,
-  // e.g. 0.5 sets it exactly in the middle of the live-range. Put after
-  // instruction or put before instruction finds an instruction in the schedule
-  // and puts the preferred prefetch time before or after the found instruction.
-  enum class OverrideType {
-    PREFETCH_EAGERNESS,     // sting value: prefetch_eagerness,
-                            // override value type : float
-    PUT_AFTER_INSTRUCTION,  // sting value: put_after_instruction,
-                            // override value type: string
-    PUT_BEFORE_INSTRUCTION  // sting value: put_before_instruction,
-                            // override value type: string
-  };
-  std::vector<std::pair<FilterType, std::string>> filter_list_;
-  OverrideType override_type_;
-  std::string override_value_;
-
-  std::string ToString() const { return config_string_; }
-
-  static StatusOr<std::vector<FilterUpdatePreferredPrefetch>>
-  ParseFilterUpdatePreferredPrefetches(std::string config);
-
-  static StatusOr<bool> IsOpSizeGte(int64_t operand_size, std::string config);
-
-  static StatusOr<bool> IsOpSizeLte(int64_t operand_size, std::string config);
-
-  static StatusOr<bool> IsInstructionNameExact(
-      absl::string_view instruction_name, std::string config);
-
-  static StatusOr<bool> IsOpNumberExact(int64_t operand_number,
-                                        std::string config);
-
-  static StatusOr<bool> IsOpIndexExact(const ShapeIndex& operand_index,
-                                       std::string config);
-
-  StatusOr<std::optional<int64_t>> GetPrefetchByEagerness(
-      int64_t earliest_prefetch_time, int64_t latest_prefetch_time) const;
-
-  StatusOr<std::optional<int64_t>> GetPrefetchTimeAfterInstruction(
-      const absl::flat_hash_map<const xla::HloInstruction*,
-                                xla::HloLiveRange::LogicalTime>& schedule)
-      const;
-
-  StatusOr<std::optional<int64_t>> GetPrefetchTimeBeforeInstruction(
-      const absl::flat_hash_map<const xla::HloInstruction*,
-                                xla::HloLiveRange::LogicalTime>& schedule)
-      const;
-
- private:
-  std::string config_string_;
-  StatusOr<xla::HloLiveRange::LogicalTime> GetScheduleTimeFromInstructionName(
-      const absl::flat_hash_map<const xla::HloInstruction*,
-                                xla::HloLiveRange::LogicalTime>& schedule)
-      const;
-
-  static StatusOr<FilterType> ParseFilterType(std::string config);
-
-  static StatusOr<OverrideType> ParseOverrideType(std::string config);
-
-  static StatusOr<ShapeIndex> ParseOperandIndex(std::string config);
-
-  static StatusOr<FilterUpdatePreferredPrefetch>
-  ParseFilterUpdatePreferredPrefetch(std::string config);
 };
 
 // The different options to be passed to the Run() API.
@@ -1664,8 +1582,8 @@ struct Options {
   float pipeline_overhead_window_size_mib = 0;
 
   // Config to filter prefetches and update preferred prefetch times for the
-  // filtered prefetches according to an update config.
-  std::vector<FilterUpdatePreferredPrefetch> filter_update_preferred_prefetches;
+  // filtered prefetches.
+  OverridePreferredPrefetches override_preferred_prefetches;
 
   // Options for slicing prefetches into smaller asynchronously copied pieces.
   SlicedPrefetchOptions sliced_prefetch_options;
@@ -1685,6 +1603,10 @@ struct Options {
   // Option to always spill buffers from alternate memory to default memory
   // and prefetching back to alternate memory(if needed) just in time for use.
   bool always_spill_to_default_memory = false;
+
+  // Config to override alternate memory assignment sorting order for filtered
+  // buffers.
+  MsaSortOrderOverrides msa_sort_order_overrides;
 };
 
 // A struct representing an asynchronous copy with its logical start and end
