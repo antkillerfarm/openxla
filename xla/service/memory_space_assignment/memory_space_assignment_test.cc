@@ -23,7 +23,6 @@ limitations under the License.
 #include <numeric>
 #include <optional>
 #include <ostream>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -38,13 +37,13 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/log.h"
-#include "absl/status/statusor.h"
-#include "absl/strings/ascii.h"
+#include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_replace.h"
-#include "absl/strings/str_split.h"
 #include "absl/types/span.h"
+#include "third_party/protobuf/io/zero_copy_stream_impl_lite.h"
+#include "third_party/protobuf/text_format.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -60,6 +59,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status.h"
+#include "xla/statusor.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/verified_hlo_module.h"
 #include "xla/util.h"
@@ -86,6 +86,7 @@ using memory_space_assignment::MemorySpaceAssignment;
 using memory_space_assignment::MemorySpaceAssignmentCostAnalysis;
 using memory_space_assignment::MemorySpaceAssignmentRepacker;
 using memory_space_assignment::Options;
+using memory_space_assignment::OverridePreferredPrefetches;
 using memory_space_assignment::PrefetchIntervalPicker;
 using memory_space_assignment::PresetAssignments;
 using memory_space_assignment::SlicedPrefetchOptions;
@@ -112,6 +113,18 @@ int64_t ShapeSize(const Shape& shape) {
 
 int64_t SizeFunction(const BufferValue& value) {
   return ShapeSize(value.shape());
+}
+
+template <typename MessageType>
+StatusOr<MessageType> ParseTextProto(const std::string& text_proto) {
+  tsl::protobuf::TextFormat::Parser parser;
+  MessageType parsed_proto;
+  tsl::protobuf::io::ArrayInputStream input_stream(text_proto.data(),
+                                                   text_proto.size());
+  if (!parser.Parse(&input_stream, &parsed_proto)) {
+    return absl::InvalidArgumentError("Could not parse text proto");
+  }
+  return parsed_proto;
 }
 
 class TestBufferIntervalComparator
@@ -941,11 +954,16 @@ TEST_P(MemorySpaceAssignmentTest, FilterUpdatePreferredPrefetchTest) {
   TF_CHECK_OK(module->set_schedule(schedule));
 
   Options options = DefaultMemorySpaceOptions();
-  auto config = "op_size_gte:24:op_size_lte:24:prefetch_eagerness:0.5";
+
+  const std::string text_proto = R"pb(
+    overrides {
+      hlo_operand_filter { size_lte: 24 size_gte: 24 }
+      override_options { prefetch_eagerness: 0.5 }
+    })pb";
   TF_ASSERT_OK_AND_ASSIGN(
-      options.filter_update_preferred_prefetches,
-      memory_space_assignment::FilterUpdatePreferredPrefetch::
-          ParseFilterUpdatePreferredPrefetches(config));
+      options.override_preferred_prefetches,
+      ParseTextProto<OverridePreferredPrefetches>(text_proto));
+
   AssignMemorySpace(module.get(), options);
 
   EXPECT_THAT(add, op::Add(op::Negate(), op::AsyncCopy(kAlternateMemorySpace,
@@ -1011,13 +1029,16 @@ TEST_P(MemorySpaceAssignmentTest, FilterUpdateConfigExactMatchBeforeTest) {
   TF_CHECK_OK(module->set_schedule(schedule));
 
   Options options = DefaultMemorySpaceOptions();
-  auto config =
-      "instruction_name_exact:add:op_number_exact:1:put_before_instruction:"
-      "negate.3";
+
+  const std::string text_proto = R"pb(
+    overrides {
+      hlo_operand_filter { instruction_name_regex: "add" operand_number: 1 }
+      override_options { before_instruction_name: "negate.3" }
+    })pb";
   TF_ASSERT_OK_AND_ASSIGN(
-      options.filter_update_preferred_prefetches,
-      memory_space_assignment::FilterUpdatePreferredPrefetch::
-          ParseFilterUpdatePreferredPrefetches(config));
+      options.override_preferred_prefetches,
+      ParseTextProto<OverridePreferredPrefetches>(text_proto));
+
   AssignMemorySpace(module.get(), options);
 
   EXPECT_THAT(add, op::Add(op::Negate(), op::AsyncCopy(kAlternateMemorySpace,
@@ -1083,13 +1104,16 @@ TEST_P(MemorySpaceAssignmentTest, FilterUpdateConfigExactMatchAfterTest) {
   TF_CHECK_OK(module->set_schedule(schedule));
 
   Options options = DefaultMemorySpaceOptions();
-  auto config =
-      "instruction_name_exact:add:op_number_exact:1:put_after_instruction:"
-      "negate.1";
+
+  const std::string text_proto = R"pb(
+    overrides {
+      hlo_operand_filter { instruction_name_regex: "add" operand_number: 1 }
+      override_options { after_instruction_name: "negate.1" }
+    })pb";
   TF_ASSERT_OK_AND_ASSIGN(
-      options.filter_update_preferred_prefetches,
-      memory_space_assignment::FilterUpdatePreferredPrefetch::
-          ParseFilterUpdatePreferredPrefetches(config));
+      options.override_preferred_prefetches,
+      ParseTextProto<OverridePreferredPrefetches>(text_proto));
+
   AssignMemorySpace(module.get(), options);
 
   EXPECT_THAT(add, op::Add(op::Negate(), op::AsyncCopy(kAlternateMemorySpace,
@@ -1155,13 +1179,16 @@ TEST_P(MemorySpaceAssignmentTest, FilterUpdateConfigExactMatchTooLateTest) {
   TF_CHECK_OK(module->set_schedule(schedule));
 
   Options options = DefaultMemorySpaceOptions();
-  auto config =
-      "instruction_name_exact:add:op_number_exact:1:put_after_instruction:"
-      "negate.5";
+
+  const std::string text_proto = R"pb(
+    overrides {
+      hlo_operand_filter { instruction_name_regex: "add" operand_number: 1 }
+      override_options { after_instruction_name: "negate.5" }
+    })pb";
   TF_ASSERT_OK_AND_ASSIGN(
-      options.filter_update_preferred_prefetches,
-      memory_space_assignment::FilterUpdatePreferredPrefetch::
-          ParseFilterUpdatePreferredPrefetches(config));
+      options.override_preferred_prefetches,
+      ParseTextProto<OverridePreferredPrefetches>(text_proto));
+
   AssignMemorySpace(module.get(), options);
 
   // Ensure the Async copy is not scheduled.
@@ -1219,13 +1246,20 @@ TEST_P(MemorySpaceAssignmentTest, FilterUpdateConfigPrecedenceTest) {
   TF_CHECK_OK(module->set_schedule(schedule));
 
   Options options = DefaultMemorySpaceOptions();
-  auto config =
-      "op_size_gte:24:op_size_lte:24:prefetch_eagerness:0.5;instruction_"
-      "name_exact:add:op_number_exact:1:put_after_instruction:negate.1";
+
+  const std::string text_proto = R"pb(
+    overrides {
+      hlo_operand_filter { size_lte: 24 size_gte: 24 }
+      override_options { prefetch_eagerness: 0.5 }
+    }
+    overrides {
+      hlo_operand_filter { instruction_name_regex: "add" operand_number: 1 }
+      override_options { after_instruction_name: "negate.1" }
+    })pb";
   TF_ASSERT_OK_AND_ASSIGN(
-      options.filter_update_preferred_prefetches,
-      memory_space_assignment::FilterUpdatePreferredPrefetch::
-          ParseFilterUpdatePreferredPrefetches(config));
+      options.override_preferred_prefetches,
+      ParseTextProto<OverridePreferredPrefetches>(text_proto));
+
   AssignMemorySpace(module.get(), options);
 
   EXPECT_THAT(add, op::Add(op::Negate(), op::AsyncCopy(kAlternateMemorySpace,
@@ -1291,13 +1325,21 @@ TEST_P(MemorySpaceAssignmentTest, FilterUpdateConfigExactMatchPrecedenceTest) {
   TF_CHECK_OK(module->set_schedule(schedule));
 
   Options options = DefaultMemorySpaceOptions();
-  auto config =
-      "instruction_name_exact:add:op_number_exact:1:put_after_instruction:"
-      "negate.1;op_size_gte:24:op_size_lte:24:prefetch_eagerness:0.5";
+
+  const std::string text_proto = R"pb(
+    overrides {
+      hlo_operand_filter { instruction_name_regex: "add" operand_number: 1 }
+      override_options { after_instruction_name: "negate.1" }
+    }
+    overrides {
+      hlo_operand_filter { size_lte: 24 size_gte: 24 }
+      override_options { prefetch_eagerness: 0.5 }
+    }
+  )pb";
   TF_ASSERT_OK_AND_ASSIGN(
-      options.filter_update_preferred_prefetches,
-      memory_space_assignment::FilterUpdatePreferredPrefetch::
-          ParseFilterUpdatePreferredPrefetches(config));
+      options.override_preferred_prefetches,
+      ParseTextProto<OverridePreferredPrefetches>(text_proto));
+
   AssignMemorySpace(module.get(), options);
 
   EXPECT_THAT(add, op::Add(op::Negate(), op::AsyncCopy(kAlternateMemorySpace,
@@ -1363,11 +1405,17 @@ TEST_P(MemorySpaceAssignmentTest, FilterUpdatePreferredPrefetchNoMatchTest) {
   TF_CHECK_OK(module->set_schedule(schedule));
 
   Options options = DefaultMemorySpaceOptions();
-  auto config = "op_size_gte:25:op_size_lte:24:prefetch_eagerness:0.5";
+
+  const std::string text_proto = R"pb(
+    overrides {
+      hlo_operand_filter { size_lte: 24 size_gte: 25 }
+      override_options { prefetch_eagerness: 0.5 }
+    }
+  )pb";
   TF_ASSERT_OK_AND_ASSIGN(
-      options.filter_update_preferred_prefetches,
-      memory_space_assignment::FilterUpdatePreferredPrefetch::
-          ParseFilterUpdatePreferredPrefetches(config));
+      options.override_preferred_prefetches,
+      ParseTextProto<OverridePreferredPrefetches>(text_proto));
+
   AssignMemorySpace(module.get(), options);
 
   EXPECT_THAT(add, op::Add(op::Negate(), op::AsyncCopy(kAlternateMemorySpace,
