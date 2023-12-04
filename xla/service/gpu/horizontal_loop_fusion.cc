@@ -64,7 +64,7 @@ class HorizontalLoopFusionImpl {
  private:
   Status Fuse(absl::Span<HloInstruction*> fused_fusion_instrs,
               bool sliced_input_fusion,
-              std::vector<HloInstruction*>& to_fuse_candidates);
+              HloComputation::InstructionVector& to_fuse_candidates);
 
   // If `sliced_input_fusion` is true, Horizontally fuses `fused_fusion_instrs`
   // into kInput computation, else fuses `fused_fusion_instrs` into kLoop
@@ -91,7 +91,7 @@ class HorizontalLoopFusionImpl {
   // operands.
   StatusOr<bool> FuseConsumerOperands(
       HloInstruction* consumer, bool sliced_input_fusion,
-      std::vector<HloInstruction*>& to_fuse_candidates);
+      HloComputation::InstructionVector& to_fuse_candidates);
 
   // FusionCandidates collects profitable candidates for a given consumer
   // instruction. GetNextSpanOfFusions() can then be iteratively invoked to
@@ -404,7 +404,7 @@ HorizontalLoopFusionImpl::FusionCandidates::GetNextSpanOfFusions() {
 
 StatusOr<bool> HorizontalLoopFusionImpl::FuseConsumerOperands(
     HloInstruction* consumer, bool sliced_input_fusion,
-    std::vector<HloInstruction*>& to_fuse_candidates) {
+    HloComputation::InstructionVector& to_fuse_candidates) {
   bool changed = false;
   FusionCandidates loop_fusion_candidates(consumer, sliced_input_fusion);
   while (true) {
@@ -588,7 +588,7 @@ Status HorizontalLoopFusionImpl::CreateFusedComputation(
 
 Status HorizontalLoopFusionImpl::Fuse(
     absl::Span<HloInstruction*> fused_fusion_instrs, bool sliced_input_fusion,
-    std::vector<HloInstruction*>& to_fuse_candidates) {
+    HloComputation::InstructionVector& to_fuse_candidates) {
   // Fuse fused_fusion_instrs and replace them with the new fused computation.
   std::unique_ptr<HloComputation> uniq_computation;
   std::vector<HloInstruction*> bound_operands;
@@ -664,8 +664,7 @@ StatusOr<bool> HorizontalLoopFusionImpl::Run() {
   // shape mismatch but bitcasts could prevent future h-fusion from happening.
   // So, a bottom-up, use-to-def order should be more favorable. It also helps
   // to save compiler iterations to reach the fixed point.
-  std::vector<HloInstruction*> to_fuse_candidates =
-      computation_->MakeInstructionPostOrder();
+  auto to_fuse_candidates = computation_->MakeInstructionPostOrder();
 
   while (!to_fuse_candidates.empty()) {
     HloInstruction* consumer = to_fuse_candidates.back();
