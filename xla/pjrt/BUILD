@@ -168,6 +168,7 @@ cc_library(
         ":pjrt_device_description",
         ":pjrt_executable",
         ":pjrt_future",
+        ":pjrt_layout",
         ":utils",
         "//xla:literal",
         "//xla:shape_util",
@@ -227,6 +228,7 @@ cc_library(
         ":executable_metadata_proto_cc",
         ":execute_options_proto_cc",
         ":pjrt_common",
+        ":pjrt_layout",
         "//xla:shape_layout",
         "//xla:shape_util",
         "//xla:status",
@@ -350,6 +352,16 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "pjrt_layout",
+    hdrs = ["pjrt_layout.h"],
+    visibility = ["//xla:friends"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:statusor",
     ],
 )
 

@@ -602,6 +602,16 @@ class PjRtClient {
     return Unimplemented("Loading executable not supported.");
   }
 
+  // Deserializes a serialized layout produced by
+  // PjRtLayout::Serialize. `serialized` must have been created with the same
+  // platform and version as this one.
+  virtual StatusOr<std::unique_ptr<PjRtLayout>> DeserializeLayout(
+      absl::string_view serialized_layout) {
+    return Unimplemented(
+        "Layout de/serialization not supported on platform '%s'.",
+        platform_name());
+  }
+
   // Creates a buffer on the device without initializing or copying any data.
   virtual StatusOr<std::unique_ptr<PjRtBuffer>> CreateUninitializedBuffer(
       const Shape& shape, PjRtDevice* device) = 0;

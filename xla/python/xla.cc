@@ -64,6 +64,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_api.h"
 #include "xla/pjrt/pjrt_c_api_client.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/custom_call_sharding.h"
 #include "xla/python/dlpack.h"
@@ -412,6 +413,13 @@ static void Init(py::module_& m) {
              }
              return devices;
            });
+
+  py::class_<PjRtLayout>(m, "PjRtLayout").def("__str__", &PjRtLayout::ToString);
+
+  py::class_<PjRtXlaLayout, PjRtLayout>(m, "PjRtXlaLayout")
+      .def("minor_to_major", [](const PjRtXlaLayout& layout) {
+        return SpanToTuple(layout.minor_to_major());
+      });
 
   // Local XLA client methods.
 
