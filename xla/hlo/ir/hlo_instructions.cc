@@ -1737,8 +1737,6 @@ HloInstruction* HloCallableInstruction::AppendInstructionIntoCalledComputation(
 HloInstruction*
 HloCallableInstruction::CloneAndAppendInstructionIntoCalledComputation(
     HloInstruction* instruction_to_append, bool add_output) {
-  CHECK(instruction_to_append->IsFusible())
-      << instruction_to_append->ToString();
   VLOG(3) << "CloneAndAppendInstructionIntoCalledComputation:\n"
           << instruction_to_append->ToString();
   HloInstruction* clone = nullptr;
