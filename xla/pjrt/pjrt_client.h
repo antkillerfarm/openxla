@@ -978,6 +978,13 @@ class PjRtBuffer {
 
   virtual const Shape& on_device_shape() const = 0;
 
+  // Creates a sub-buffer from the PjRtBuffer. The returned slice becomes ready
+  // when this class instance becomes ready.
+  virtual StatusOr<std::unique_ptr<PjRtBuffer>> Slice(int64_t offset,
+                                                      const Shape& shape) {
+    return Unimplemented("Slice is not implemented.");
+  }
+
   virtual bool has_dynamic_dimensions() const {
     return on_device_shape().is_dynamic();
   }
