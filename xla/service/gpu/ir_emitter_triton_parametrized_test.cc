@@ -339,7 +339,7 @@ ENTRY e {
 
   EXPECT_TRUE(RunAndCompareTwoModules(
       hlo_ref, hlo_test, ErrorSpec{/*aabs=*/tolerance, /*arel=*/tolerance},
-      /*run_hlo_passes=*/false));
+      /*run_hlo_passes=*/false, /*args_max_bits_of_precision=*/6));
 }
 
 std::vector<HloOpcode> TestedBinaryElementwise(PrimitiveType element_type) {
