@@ -2819,12 +2819,12 @@ bool MemoryBoundLoopOptimizer::AllocateBetween(int64_t begin_idx,
   if (end_idx < begin_idx) {
     end_idx_sentinel += loop_size_;
   }
-  for (int64_t i = begin_idx; i <= end_idx_sentinel; ++i) {
+  for (int64_t i = begin_idx; i < end_idx_sentinel; ++i) {
     if (remaining_memory_[i % loop_size_] < size) {
       return false;
     }
   }
-  for (int64_t i = begin_idx; i <= end_idx_sentinel; ++i) {
+  for (int64_t i = begin_idx; i < end_idx_sentinel; ++i) {
     remaining_memory_[i % loop_size_] -= size;
   }
   return true;
@@ -2861,7 +2861,7 @@ bool MemoryBoundLoopOptimizer::AllocateTemporary(LoopValue& value) {
 }
 
 bool MemoryBoundLoopOptimizer::AllocatePinned(LoopValue& value) {
-  bool success = AllocateBetween(0, loop_size_, value.size);
+  bool success = AllocateBetween(0, loop_size_ - 1, value.size);
   if (success) {
     CHECK(value.header_position);
     value.allocations.push_back(
