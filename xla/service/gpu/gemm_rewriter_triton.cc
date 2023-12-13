@@ -17,9 +17,11 @@ limitations under the License.
 
 #include <array>
 #include <cstdint>
+#include <deque>
 #include <optional>
 #include <queue>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -31,7 +33,6 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
-#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -81,70 +82,86 @@ using triton_fusion::Requirements;
 using triton_fusion::RequirementsOrError;
 using triton_fusion::TransformDirection;
 
-// This represents a path in a graph which helps in separating different uses of
-// HLOs in fusions.
+// These nodes represent the fusion DAG while it's being built.
+struct FusionNode {
+  FusionNode(const HloInstruction& original_hlo, DimensionOrder dim_order)
+      : original_hlo(&original_hlo), dim_order(dim_order) {}
+  // The original HLO (which is outside the fusion computation).
+  const HloInstruction* original_hlo = nullptr;
+  // The dim order corresponding to the original HLO.
+  DimensionOrder dim_order;
+
+  // These members are filled later by the fusion creator algorithm.
+
+  // If true: we should create a fused version of the node.
+  // If false: we should create a parameter instead of the node in the fusion.
+  bool should_fuse = false;
+  // The pointers must point to FusionNodes in the same FusionGraph.
+  // This must be empty when should_fuse == false.
+  std::vector<FusionNode*> operands;
+
+  // This member is filled later during the building of the fusion.
+
+  // The fused HLO inside the new fusion computation, built by the builder.
+  //
+  // This can have the same opcode as `original_hlo` or it can be a parameter if
+  // the original HLO can't be fused.
+  HloInstruction* fused_hlo = nullptr;
+};
+
+// This represents the fusion DAG while it's being built.
 //
-// For example let's say that we can reach an HLO in 2 ways:
-// 1. dot->operand(0)->operand(1)->operand(2);
-// 2. dot->operand(0)->operand(2)->operand(0);
-// Then the corresponding paths will be:
-// 1. "0,1,2"
-// 2. "0,2,0"
-// dot->users()[0]->users()[0]->operand(1) would be represented like this:
-// "-1,-1,1"
-class GraphPath final {
+// This is a move-only wrapper around std::deque<FusionNode> to avoid copying it
+// and getting dangling pointers inside the nodes.
+class FusionGraph {
  public:
-  static inline constexpr int64_t kUserIndex = -1;
-  GraphPath() = default;
-  GraphPath GetPathOfOperand(int64_t operand_index) const {
-    CHECK_GE(operand_index, 0);
-    GraphPath path = *this;
-    path.path_.push_back(operand_index);
-    return path;
+  FusionGraph() = default;
+  FusionGraph(FusionGraph&&) = default;
+  FusionGraph& operator=(FusionGraph&&) = default;
+  FusionGraph(const FusionGraph&) = delete;
+  FusionGraph& operator=(const FusionGraph&) = delete;
+
+  FusionNode& emplace_back(const HloInstruction& original_hlo,
+                           DimensionOrder dim_order) {
+    return nodes_.emplace_back(original_hlo, dim_order);
   }
 
-  GraphPath GetPathOfUser() const {
-    GraphPath path = *this;
-    path.path_.push_back(kUserIndex);
-    return path;
+  FusionNode* root() {
+    if (nodes_.empty()) {
+      return nullptr;
+    }
+    return &nodes_.front();
   }
-  std::string ToString() const { return absl::StrJoin(path_, ","); }
 
-  bool operator==(const GraphPath& other) const { return path_ == other.path_; }
-
-  template <typename H>
-  friend H AbslHashValue(H h, const GraphPath& path) {
-    return H::combine(std::move(h), path.path_);
+  const FusionNode* root() const {
+    return const_cast<FusionGraph*>(this)->root();
   }
 
  private:
-  std::vector<int64_t> path_;
+  // std::deque doesn't invalidate references to its elements on emplace_back,
+  // so the internal pointers in the FusionNodes remain valid.
+  std::deque<FusionNode> nodes_;
 };
 
-struct FusionQueueItem {
-  FusionQueueItem(GraphPath path, const HloInstruction& hlo,
-                  DimensionOrder dim_order)
-      : path(path), hlo(hlo), dim_order(dim_order) {}
-
-  std::string ToString() const {
-    return absl::StrCat(path.ToString(), ":", hlo.ToString(), ":",
-                        dim_order.ToString());
-  }
-
-  const GraphPath path;
-  const HloInstruction& hlo;
-  const DimensionOrder dim_order;
-};
-
-struct FusionDecisionAndIterspec {
-  bool fuse = false;
-  TensorIterationSpec iterspec;
-};
-using FusionMap = absl::flat_hash_map<GraphPath, FusionDecisionAndIterspec>;
-struct FusionMapAndRequirements {
-  FusionMap fusion_map;
+struct FusionGraphAndRequirements {
+  FusionGraph fusion_graph;
   Requirements requirements;
 };
+
+struct FusionNodeReuseKey {
+  const HloInstruction* original_hlo;
+  TensorIterationSpec iterspec;
+
+  auto ToTuple() const { return std::make_tuple(original_hlo, iterspec); }
+  bool operator==(const FusionNodeReuseKey& other) const {
+    return ToTuple() == other.ToTuple();
+  }
+  template <typename H>
+  friend H AbslHashValue(H h, const FusionNodeReuseKey& key) {
+    return H::combine(std::move(h), key.ToTuple());
+  }
+};
+using FusionNodeReuseMap = absl::flat_hash_map<FusionNodeReuseKey, FusionNode*>;
 
 struct HlosAndRequirements {
   // The original HLO (which is outside the fusion computation).
@@ -264,106 +281,115 @@ std::optional<DimOrdersAndReqs> GetUserDimOrdersAndCombinedReqsIfProfitable(
 
 // Builds the fusion map and the requirements which can later be used to
 // actually fuse that subgraph.
-FusionMapAndRequirements BuildFusionMapAndRequirementsTowardOperands(
-    const GraphPath& root_path, const HloInstruction& root_hlo,
-    const DimensionOrder& root_dim_order, const std::optional<int>& max_params,
+FusionGraphAndRequirements BuildFusionGraphAndRequirementsTowardOperands(
+    const HloInstruction& root_hlo, const DimensionOrder& root_dim_order,
+    const std::optional<int>& max_params,
     const se::GpuComputeCapability& gpu_version,
     const HeroProperties& properties, const Requirements& requirements_so_far) {
   CHECK(!max_params.has_value() || max_params.value() >= 1);
-  FusionMap fusion_map;
-  Requirements combined_requirements = requirements_so_far;
-  auto add_to_fusion_map = [&](const FusionQueueItem& item, bool fuse) {
-    CHECK(
-        fusion_map
-            .insert({item.path, {fuse, item.dim_order.ToTensorIterationSpec()}})
-            .second);
+  FusionGraph fusion_graph;
+  FusionNodeReuseMap reuse_map;
+  auto get_or_create_fusion_node =
+      [&](const HloInstruction& hlo, const DimensionOrder& dim_order,
+          bool* is_new_node = nullptr) -> FusionNode* {
+    FusionNodeReuseKey reuse_key = {&hlo, dim_order.ToTensorIterationSpec()};
+    if (auto it = reuse_map.find(reuse_key); it != reuse_map.end()) {
+      if (is_new_node != nullptr) {
+        *is_new_node = false;
+      }
+      return it->second;
+    }
+    FusionNode* fusion_node = &fusion_graph.emplace_back(hlo, dim_order);
+    CHECK(reuse_map.insert({reuse_key, fusion_node}).second);
+    if (is_new_node != nullptr) {
+      *is_new_node = true;
+    }
+    return fusion_node;
   };
+  Requirements combined_requirements = requirements_so_far;
+  FusionNode* root = get_or_create_fusion_node(root_hlo, root_dim_order);
 
-  // GraphPaths at the fusion edge that can either get fused too or
-  // become parameters of the fusion. Used to track the number of parameters.
-  absl::flat_hash_set<GraphPath> inputs({root_path});
-  std::queue<FusionQueueItem> fusion_queue(
-      {FusionQueueItem(root_path, root_hlo, root_dim_order)});
+  // Nodes at the fusion edge that can either get fused too or become parameters
+  // of the fusion. Used to track the number of parameters.
+  absl::flat_hash_set<FusionNode*> inputs({root});
+  std::queue<FusionNode*> queue({root});
   int64_t num_requeued = 0;
   // BFS
-  while (fusion_queue.size() > num_requeued) {
-    FusionQueueItem item = fusion_queue.front();
-    fusion_queue.pop();
+  while (queue.size() > num_requeued) {
+    FusionNode* node = queue.front();
+    queue.pop();
 
     // Watch the total number of fusion parameters.
     if (max_params.has_value() &&
-        inputs.size() + NumAddedParameters(item.hlo) > max_params.value()) {
+        inputs.size() + NumAddedParameters(*node->original_hlo) >
+            max_params.value()) {
       // Re-queue: the number of parameters may go down when other instructions
       // are processed.
-      fusion_queue.push(item);
+      queue.push(node);
       // Prevent infinite loops.
       ++num_requeued;
       continue;
     }
     num_requeued = 0;
-    if (item.hlo.opcode() == HloOpcode::kParameter) {
-      add_to_fusion_map(item, /*fuse=*/false);
+    if (node->original_hlo->opcode() == HloOpcode::kParameter) {
+      // Don't fuse.
       continue;
     }
     auto opt_result = GetOperandDimOrdersAndCombinedReqsIfProfitable(
-        item.hlo, item.dim_order, properties, gpu_version,
+        *node->original_hlo, node->dim_order, properties, gpu_version,
         combined_requirements);
     if (!opt_result.has_value()) {
-      add_to_fusion_map(item, /*fuse=*/false);
+      // Don't fuse.
       continue;
     }
     const DimOrderMap operand_dim_orders = std::move(opt_result->dim_orders);
     combined_requirements = std::move(opt_result->requirements);
-    inputs.erase(item.path);
-    for (int64_t i = 0; i < item.hlo.operand_count(); ++i) {
-      GraphPath operand_path = item.path.GetPathOfOperand(i);
-      const HloInstruction& operand = *item.hlo.operand(i);
+    inputs.erase(node);
+    node->operands.reserve(node->original_hlo->operand_count());
+    for (int64_t i = 0; i < node->original_hlo->operand_count(); ++i) {
+      const HloInstruction& operand = *node->original_hlo->operand(i);
       const DimensionOrder& operand_dim_order = operand_dim_orders.at(&operand);
-
-      FusionQueueItem new_item(operand_path, operand, operand_dim_order);
-      VLOG(6) << "Enqueueing " << new_item.ToString();
-      inputs.insert(new_item.path);
-      fusion_queue.push(new_item);
+      bool is_new_node = false;
+      FusionNode* operand_node =
+          get_or_create_fusion_node(operand, operand_dim_order, &is_new_node);
+      node->operands.push_back(operand_node);
+      if (is_new_node) {
+        VLOG(6) << "Enqueueing " << operand_node->original_hlo->ToString()
+                << ":" << operand_node->dim_order.ToString();
+        inputs.insert(operand_node);
+        queue.push(operand_node);
+      }
     }
-    add_to_fusion_map(item, /*fuse=*/true);
+    node->should_fuse = true;
   }
-  // Handle the remaining requeued items.
-  while (!fusion_queue.empty()) {
-    add_to_fusion_map(fusion_queue.front(), /*fuse=*/false);
-    fusion_queue.pop();
-  }
-  return {fusion_map, combined_requirements};
+  return {std::move(fusion_graph), std::move(combined_requirements)};
 }
 
 // Builds the nodes for the fusion represented by the fusion map.
 HloInstruction& BuildFusionTowardOperands(
-    const FusionMap& fusion_map, const GraphPath& path,
-    const HloInstruction& hlo,
+    FusionNode& node,
     HloComputation::Builder& builder,            // append
     std::vector<HloInstruction*>& fusion_params  // append
 ) {
-  auto fusion_map_it = fusion_map.find(path);
-  CHECK(fusion_map_it != fusion_map.end());
-  FusionDecisionAndIterspec decision_and_iterspec = fusion_map_it->second;
-
-  HloInstruction* new_hlo = nullptr;
-  if (decision_and_iterspec.fuse) {
+  if (node.fused_hlo != nullptr) {
+    return *node.fused_hlo;
+  }
+  if (node.should_fuse) {
     HloInstruction::InstructionVector new_operands;
-    for (int i = 0; i < hlo.operand_count(); ++i) {
-      const HloInstruction* operand = hlo.operand(i);
+    for (FusionNode* operand : node.operands) {
       new_operands.push_back(
-          &BuildFusionTowardOperands(fusion_map, path.GetPathOfOperand(i),
-                                     *operand, builder, fusion_params));
+          &BuildFusionTowardOperands(*operand, builder, fusion_params));
     }
-    new_hlo = builder.AddInstruction(
-        hlo.CloneWithNewOperands(hlo.shape(), new_operands));
+    node.fused_hlo =
+        builder.AddInstruction(node.original_hlo->CloneWithNewOperands(
+            node.original_hlo->shape(), new_operands));
   } else {
-    fusion_params.push_back(const_cast<HloInstruction*>(&hlo));
-    new_hlo = builder.AddInstruction(HloInstruction::CreateParameter(
-        fusion_params.size() - 1, hlo.shape(),
+    fusion_params.push_back(const_cast<HloInstruction*>(node.original_hlo));
+    node.fused_hlo = builder.AddInstruction(HloInstruction::CreateParameter(
+        fusion_params.size() - 1, node.original_hlo->shape(),
         absl::StrCat("parameter_", fusion_params.size() - 1)));
   }
-  return *new_hlo;
+  return *node.fused_hlo;
 }
 
 // Grows the fusion toward the operands.
@@ -379,22 +405,22 @@ HloInstruction& BuildFusionTowardOperands(
 // The return value contains the HLOs corresponding to `root_hlo` and the
 // requirements corresponding to the whole fusion so far.
 HlosAndRequirements FuseTowardOperands(
-    const GraphPath& root_path, const HloInstruction& root_hlo,
-    const DimensionOrder& root_dim_order, const std::optional<int>& max_params,
+    const HloInstruction& root_hlo, const DimensionOrder& root_dim_order,
+    const std::optional<int>& max_params,
     const se::GpuComputeCapability& gpu_version,
     const HeroProperties& properties, const Requirements& requirements_so_far,
     HloComputation::Builder& builder,            // append
     std::vector<HloInstruction*>& fusion_params  // append
 ) {
-  FusionMapAndRequirements fusion_map_and_reqs =
-      BuildFusionMapAndRequirementsTowardOperands(
-          root_path, root_hlo, root_dim_order, max_params, gpu_version,
-          properties, requirements_so_far);
-  HloInstruction& fused_hlo_or_param =
-      BuildFusionTowardOperands(fusion_map_and_reqs.fusion_map, root_path,
-                                root_hlo, builder, fusion_params);
+  FusionGraphAndRequirements fusion_graph_and_reqs =
+      BuildFusionGraphAndRequirementsTowardOperands(
+          root_hlo, root_dim_order, max_params, gpu_version, properties,
+          requirements_so_far);
+  CHECK_NE(fusion_graph_and_reqs.fusion_graph.root(), nullptr);
+  HloInstruction& fused_hlo_or_param = BuildFusionTowardOperands(
+      *fusion_graph_and_reqs.fusion_graph.root(), builder, fusion_params);
   return HlosAndRequirements{&root_hlo, &fused_hlo_or_param,
-                             fusion_map_and_reqs.requirements};
+                             fusion_graph_and_reqs.requirements};
 }
 
 // Grows the fusion toward the given dot operand.
@@ -419,8 +445,7 @@ HlosAndRequirements FuseDotOperand(
   const FusionContext context =
       FusionContext::FromDotOperand(dot, operand_index);
   const HloInstruction& operand = *dot.operand(operand_index);
-  return FuseTowardOperands(GraphPath().GetPathOfOperand(operand_index),
-                            operand, context.dim_orders().at(&operand),
+  return FuseTowardOperands(operand, context.dim_orders().at(&operand),
                             TritonFusionAnalysis::kMaxParameterPerDotOperand,
                             gpu_version, context.hero_properties(),
                             context.requirements(), builder, fusion_params);
@@ -440,8 +465,8 @@ HlosAndRequirements FuseDotOperand(
 // but currently only in special cases, such as binary elementwise operation
 // with broadcast of scalar constant.
 HlosAndRequirements FuseTowardUsers(
-    const GraphPath& hlo_path, const HloInstruction& hlo,
-    const HloInstruction& fused_hlo, const DimensionOrder& hlo_dim_order,
+    const HloInstruction& hlo, const HloInstruction& fused_hlo,
+    const DimensionOrder& hlo_dim_order,
     const se::GpuComputeCapability& gpu_version,
     const HeroProperties& properties, const Requirements& requirements,
     HloComputation::Builder& builder,            // append
@@ -464,7 +489,6 @@ HlosAndRequirements FuseTowardUsers(
     return existing_hlos_and_requirements;
   }
   DimensionOrder user_dim_order = opt_user_result->dim_orders.at(&user);
-  GraphPath user_path = hlo_path.GetPathOfUser();
   Requirements combined_requirements = opt_user_result->requirements;
 
   HloInstruction::InstructionVector new_operands;
@@ -493,8 +517,7 @@ HlosAndRequirements FuseTowardUsers(
         new_operands.push_back(const_cast<HloInstruction*>(&fused_hlo));
       } else {
         HlosAndRequirements hlos_and_requirements = FuseTowardOperands(
-            user_path.GetPathOfOperand(i), operand,
-            operand_dim_orders.at(&operand),
+            operand, operand_dim_orders.at(&operand),
             /*max_params=*/std::nullopt, gpu_version, properties,
             combined_requirements, builder, fusion_params);
         new_operands.push_back(
@@ -506,9 +529,9 @@ HlosAndRequirements FuseTowardUsers(
 
   const HloInstruction& fused_user = *builder.AddInstruction(
       user.CloneWithNewOperands(user.shape(), new_operands));
-  return FuseTowardUsers(user_path, user, fused_user, user_dim_order,
-                         gpu_version, properties, combined_requirements,
-                         builder, fusion_params);
+  return FuseTowardUsers(user, fused_user, user_dim_order, gpu_version,
+                         properties, combined_requirements, builder,
+                         fusion_params);
 }
 
 // Grows the fusion toward the users of the dot.
@@ -533,10 +556,9 @@ HlosAndRequirements FuseDotOutput(
 ) {
   const auto context =
       FusionContext::FromDotOutput(dot, /*split_k=*/1, requirements);
-  return FuseTowardUsers(GraphPath(), dot, fused_dot,
-                         context.dim_orders().at(&dot), gpu_version,
-                         context.hero_properties(), context.requirements(),
-                         builder, fusion_params);
+  return FuseTowardUsers(dot, fused_dot, context.dim_orders().at(&dot),
+                         gpu_version, context.hero_properties(),
+                         context.requirements(), builder, fusion_params);
 }
 
 // Fuses dot and the compatible and profitable to fuse operations around it
