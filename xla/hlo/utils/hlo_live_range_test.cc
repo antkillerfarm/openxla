@@ -431,11 +431,11 @@ HloModule AsyncCall, is_scheduled=true, entry_computation_layout={(f32[4096]{0},
 ENTRY %main (a: f32[4096], b: f32[4096]) -> f32[4096] {
   %a = f32[4096]{0} parameter(0)
   %b = f32[4096]{0} parameter(1)
-  %async-start = ((f32[4096]{0}, f32[4096]{0}), f32[4096]{0}, u32[]) async-start(f32[4096]{0} %a, f32[4096]{0} %b), async_group_id=0, calls=%async_wrapped
+  %async-start = ((f32[4096]{0}, f32[4096]{0}), f32[4096]{0}, u32[]) async-start(f32[4096]{0} %a, f32[4096]{0} %b), calls=%async_wrapped
   %negate_2 = f32[4096]{0} negate(f32[4096]{0} %a)
   %negate_3 = f32[4096]{0} negate(f32[4096]{0} %b)
   %add_0 = f32[4096]{0} add(f32[4096]{0} %negate_2, f32[4096]{0} %negate_3)
-  %async-done = f32[4096]{0} async-done(((f32[4096]{0}, f32[4096]{0}), f32[4096]{0}, u32[]) %async-start), async_group_id=0, calls=%async_wrapped
+  %async-done = f32[4096]{0} async-done(((f32[4096]{0}, f32[4096]{0}), f32[4096]{0}, u32[]) %async-start), calls=%async_wrapped
   ROOT %add_1 = f32[4096]{0} add(f32[4096]{0} %add_0, f32[4096]{0} %async-done)
 }
 )";

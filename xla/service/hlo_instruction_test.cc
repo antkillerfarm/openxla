@@ -1853,17 +1853,11 @@ TEST_F(HloInstructionTest, StringifyAsyncOps) {
   HloInstruction* async_start =
       entry_builder.AddInstruction(HloInstruction::CreateAsyncStart(
           s_tuple, {entry_param}, async_computation.get(),
-          /*async_group_id=*/std::nullopt,
           /*async_execution_thread=*/"parallel_thread"));
-  HloInstruction* async_update =
-      entry_builder.AddInstruction(HloInstruction::CreateAsyncUpdate(
-          s_tuple, async_start, async_computation.get(),
-          /*async_group_id=*/std::nullopt,
-          /*async_execution_thread=*/"parallel_thread"));
-  entry_builder.AddInstruction(HloInstruction::CreateAsyncDone(
-      s2, async_update, async_computation.get(),
-      /*async_group_id=*/std::nullopt,
-      /*async_execution_thread=*/"parallel_thread"));
+  HloInstruction* async_update = entry_builder.AddInstruction(
+      HloInstruction::CreateAsyncUpdate(s_tuple, async_start));
+  entry_builder.AddInstruction(
+      HloInstruction::CreateAsyncDone(s2, async_update));
 
   auto module = CreateNewVerifiedModule();
   module->AddEntryComputation(entry_builder.Build());
@@ -1875,8 +1869,8 @@ TEST_F(HloInstructionTest, StringifyAsyncOps) {
 ENTRY %Entry (p0: f32[10]) -> f32[20] {
   %p0 = f32[10]{0} parameter(0)
   %custom-call-start = ((f32[10]{0}), f32[20]{0}, s32[]) custom-call-start(f32[10]{0} %p0), async_execution_thread="parallel_thread", custom_call_target="foo"
-  %custom-call-update = ((f32[10]{0}), f32[20]{0}, s32[]) custom-call-update(((f32[10]{0}), f32[20]{0}, s32[]) %custom-call-start), async_execution_thread="parallel_thread", custom_call_target="foo"
-  ROOT %custom-call-done = f32[20]{0} custom-call-done(((f32[10]{0}), f32[20]{0}, s32[]) %custom-call-update), async_execution_thread="parallel_thread", custom_call_target="foo"
+  %custom-call-update = ((f32[10]{0}), f32[20]{0}, s32[]) custom-call-update(((f32[10]{0}), f32[20]{0}, s32[]) %custom-call-start)
+  ROOT %custom-call-done = f32[20]{0} custom-call-done(((f32[10]{0}), f32[20]{0}, s32[]) %custom-call-update)
 }
 
 )";
@@ -1892,8 +1886,8 @@ ENTRY %Entry (p0: f32[10]) -> f32[20] {
 ENTRY %Entry (p0: f32[10]) -> f32[20] {
   %p0 = f32[10]{0} parameter(0)
   %custom-call-start = ((f32[10]{0}), f32[20]{0}, s32[]) async-start(f32[10]{0} %p0), async_execution_thread="parallel_thread", calls=%AsyncOp
-  %custom-call-update = ((f32[10]{0}), f32[20]{0}, s32[]) async-update(((f32[10]{0}), f32[20]{0}, s32[]) %custom-call-start), async_execution_thread="parallel_thread", calls=%AsyncOp
-  ROOT %custom-call-done = f32[20]{0} async-done(((f32[10]{0}), f32[20]{0}, s32[]) %custom-call-update), async_execution_thread="parallel_thread", calls=%AsyncOp
+  %custom-call-update = ((f32[10]{0}), f32[20]{0}, s32[]) async-update(((f32[10]{0}), f32[20]{0}, s32[]) %custom-call-start)
+  ROOT %custom-call-done = f32[20]{0} async-done(((f32[10]{0}), f32[20]{0}, s32[]) %custom-call-update)
 }
 
 )";
@@ -1938,17 +1932,11 @@ TEST_F(HloInstructionTest, StringifyAsyncOpsWithReduceScatter) {
   HloInstruction* async_start =
       entry_builder.AddInstruction(HloInstruction::CreateAsyncStart(
           async_start_shape, {entry_param}, async_computation.get(),
-          /*async_group_id=*/std::nullopt,
           /*async_execution_thread=*/"parallel_thread"));
-  HloInstruction* async_update =
-      entry_builder.AddInstruction(HloInstruction::CreateAsyncUpdate(
-          async_start_shape, async_start, async_computation.get(),
-          /*async_group_id=*/std::nullopt,
-          /*async_execution_thread=*/"parallel_thread"));
-  entry_builder.AddInstruction(HloInstruction::CreateAsyncDone(
-      rs_output_shape, async_update, async_computation.get(),
-      /*async_group_id=*/std::nullopt,
-      /*async_execution_thread=*/"parallel_thread"));
+  HloInstruction* async_update = entry_builder.AddInstruction(
+      HloInstruction::CreateAsyncUpdate(async_start_shape, async_start));
+  entry_builder.AddInstruction(
+      HloInstruction::CreateAsyncDone(rs_output_shape, async_update));
 
   auto module = CreateNewVerifiedModule();
   module->AddEntryComputation(entry_builder.Build());
@@ -1967,8 +1955,8 @@ TEST_F(HloInstructionTest, StringifyAsyncOpsWithReduceScatter) {
 ENTRY %Entry (pentry: f32[20]) -> f32[10] {
   %pentry = f32[20]{0} parameter(0)
   %reduce-scatter-start = ((f32[20]{0}), f32[10]{0}) reduce-scatter-start(f32[20]{0} %pentry), async_execution_thread="parallel_thread", replica_groups={}, dimensions={0}, to_apply=%add
-  %reduce-scatter-update = ((f32[20]{0}), f32[10]{0}) reduce-scatter-update(((f32[20]{0}), f32[10]{0}) %reduce-scatter-start), async_execution_thread="parallel_thread", replica_groups={}, dimensions={0}, to_apply=%add
-  ROOT %reduce-scatter-done = f32[10]{0} reduce-scatter-done(((f32[20]{0}), f32[10]{0}) %reduce-scatter-update), async_execution_thread="parallel_thread", replica_groups={}, dimensions={0}, to_apply=%add
+  %reduce-scatter-update = ((f32[20]{0}), f32[10]{0}) reduce-scatter-update(((f32[20]{0}), f32[10]{0}) %reduce-scatter-start)
+  ROOT %reduce-scatter-done = f32[10]{0} reduce-scatter-done(((f32[20]{0}), f32[10]{0}) %reduce-scatter-update)
 }
 
 )";
@@ -1991,8 +1979,8 @@ ENTRY %Entry (pentry: f32[20]) -> f32[10] {
 ENTRY %Entry (pentry: f32[20]) -> f32[10] {
   %pentry = f32[20]{0} parameter(0)
   %reduce-scatter-start = ((f32[20]{0}), f32[10]{0}) async-start(f32[20]{0} %pentry), async_execution_thread="parallel_thread", calls=%AsyncOp
-  %reduce-scatter-update = ((f32[20]{0}), f32[10]{0}) async-update(((f32[20]{0}), f32[10]{0}) %reduce-scatter-start), async_execution_thread="parallel_thread", calls=%AsyncOp
-  ROOT %reduce-scatter-done = f32[10]{0} async-done(((f32[20]{0}), f32[10]{0}) %reduce-scatter-update), async_execution_thread="parallel_thread", calls=%AsyncOp
+  %reduce-scatter-update = ((f32[20]{0}), f32[10]{0}) async-update(((f32[20]{0}), f32[10]{0}) %reduce-scatter-start)
+  ROOT %reduce-scatter-done = f32[10]{0} async-done(((f32[20]{0}), f32[10]{0}) %reduce-scatter-update)
 }
 
 )";
