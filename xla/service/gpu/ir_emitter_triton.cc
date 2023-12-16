@@ -1830,6 +1830,7 @@ Status EmitSoftMax(mlir::OpBuilder builder, absl::string_view libdevice_path,
     Value base_offset = batch_iterspec ? row_offset : zero_offset;
 
     // We assume that the reduced axis of this parameter has length row_len.
+    // TODO(316637896): Relax assumption that param reduce_dim_len == row_len.
     CHECK_EQ(reduce_dim_len, row_len);
 
     // block_size must be a power of two.
