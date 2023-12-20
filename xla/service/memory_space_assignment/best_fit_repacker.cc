@@ -493,7 +493,7 @@ class BestFitRepacker
     LOG(FATAL) << "We should never get here.";
   }
 
-  Result Finish() override {
+  StatusOr<Result> Finish() override {
     std::vector<BufferInterval> sorted_buffer_intervals =
         GetSortedBufferIntervals();
 
@@ -569,7 +569,7 @@ class BestFitRepacker
   }
 
   bool Repack() {
-    Finish();
+    TF_CHECK_OK(Finish().status());
     bool success = result_.heap_size <= max_size_;
     if (!success) {
       VLOG(1) << "Repacking unsuccessful with heap size " << result_.heap_size;
