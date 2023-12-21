@@ -1689,6 +1689,62 @@ TEST_F(XlaBuilderTest, UnboundedBatchNormTraining) {
       << " expected: " << ShapeUtil::HumanString(expected_tuple_shape);
 }
 
+TEST_F(XlaBuilderTest, UnboundedBroadcastUnsupportedOperand) {
+  XlaBuilder b(TestName());
+  StatusOr<Shape> operand = ParseShape("f32[<=3, ?]");
+  StatusOr<Shape> expected = ParseShape("f32[1, <=3, 4]");
+  ASSERT_IS_OK(operand.status());
+  ASSERT_IS_OK(expected.status());
+  Broadcast(Parameter(&b, 0, operand.value(), "operand"),
+            /*broadcast_sizes=*/{1});
+  EXPECT_THAT(BuildHloModule(&b).status().message(),
+              HasSubstr("is_unbounded_dynamic"));
+}
+
+TEST_F(XlaBuilderTest, UnboundedBroadcastUnsupportedBroadcastSize) {
+  XlaBuilder b(TestName());
+  StatusOr<Shape> operand = ParseShape("f32[<=3, 4]");
+  StatusOr<Shape> expected = ParseShape("f32[?, <=3, 4]");
+  ASSERT_IS_OK(operand.status());
+  ASSERT_IS_OK(expected.status());
+  Broadcast(Parameter(&b, 0, operand.value(), "operand"),
+            /*broadcast_sizes=*/{Shape::kUnboundedSize});
+  EXPECT_THAT(BuildHloModule(&b).status().message(),
+              HasSubstr("Non-broadcast dimensions must not be dynamic."));
+}
+
+TEST_F(XlaBuilderTest, UnboundedBroadcastInDim) {
+  XlaBuilder b(TestName());
+  StatusOr<Shape> operand = ParseShape("f32[<=2, ?]");
+  StatusOr<Shape> expected = ParseShape("f32[<=2, 3, 4]");
+  ASSERT_IS_OK(operand.status());
+  ASSERT_IS_OK(expected.status());
+  BroadcastInDim(Parameter(&b, 0, operand.value(), "operand"),
+                 /*out_dim_size=*/{2, 3, 4},
+                 /*broadcast_dimensions=*/{0, 2});
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(&b));
+  const Shape& result =
+      module->entry_computation()->root_instruction()->shape();
+  EXPECT_TRUE(ShapeUtil::Equal(result, expected.value()))
+      << "result: " << ShapeUtil::HumanString(result)
+      << " expected: " << ShapeUtil::HumanString(expected.value());
+}
+
+TEST_F(XlaBuilderTest, UnboundedBroadcastInDimUnsupported) {
+  XlaBuilder b(TestName());
+  StatusOr<Shape> operand = ParseShape("f32[<=2, ?]");
+  StatusOr<Shape> expected = ParseShape("f32[<=2, 3, ?]");
+  ASSERT_IS_OK(operand.status());
+  ASSERT_IS_OK(expected.status());
+  BroadcastInDim(Parameter(&b, 0, operand.value(), "operand"),
+                 /*out_dim_size=*/{2, 3, Shape::kUnboundedSize},
+                 /*broadcast_dimensions=*/{0, 2});
+  EXPECT_THAT(
+      BuildHloModule(&b).status().message(),
+      HasSubstr(
+          "BroadcastInDim output must shape be static or boudned dynamic"));
+}
+
 TEST_F(XlaBuilderTest, UnboundedClamp) {
   XlaBuilder b(TestName());
   StatusOr<Shape> lhs = ParseShape("f32[1, ?, 2, ?, <=2, ?, ?]");

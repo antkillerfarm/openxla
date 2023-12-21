@@ -3859,6 +3859,65 @@ TEST_F(ShapeInferenceTest, UnboundedBatchNormTraining) {
       << " expected: " << ShapeUtil::HumanString(expected_tuple_shape);
 }
 
+TEST_F(ShapeInferenceTest, UnboundedBroadcastUnsupportedOperand) {
+  StatusOr<Shape> operand = ParseShape("f32[<=2, ?]");
+  StatusOr<Shape> expected = ParseShape("f32[1, <=2, ?]");
+  ASSERT_IS_OK(operand.status());
+  ASSERT_IS_OK(expected.status());
+  StatusOr<Shape> inferred_status = ShapeInference::InferBroadcastShape(
+      operand.value(), /*broadcast_sizes=*/{1});
+  EXPECT_THAT(inferred_status.status().message(),
+              HasSubstr("is_unbounded_dynamic"));
+}
+
+TEST_F(ShapeInferenceTest, UnboundedBroadcastUnsupportedBroadcastSize) {
+  StatusOr<Shape> operand = ParseShape("f32[<=2, 4]");
+  StatusOr<Shape> expected = ParseShape("f32[?, <=2, 4]");
+  ASSERT_IS_OK(operand.status());
+  ASSERT_IS_OK(expected.status());
+  StatusOr<Shape> inferred_status = ShapeInference::InferBroadcastShape(
+      operand.value(), /*broadcast_sizes=*/{Shape::kUnboundedSize});
+  EXPECT_THAT(inferred_status.status().message(),
+              HasSubstr("Non-broadcast dimensions must not be dynamic."));
+}
+
+TEST_F(ShapeInferenceTest, UnboundedBroadcastInDim) {
+  StatusOr<Shape> operand = ParseShape("f32[<=2, ?]");
+  StatusOr<Shape> expected = ParseShape("f32[<=2, 3, 4]");
+  ASSERT_IS_OK(operand.status());
+  ASSERT_IS_OK(expected.status());
+  StatusOr<Shape> inferred_status =
+      ShapeInference::InferBroadcastShape(operand.value(), expected.value(),
+                                          /*broadcast_dimensions=*/{0, 2});
+  ASSERT_IS_OK(inferred_status.status());
+  EXPECT_TRUE(ShapeUtil::Equal(inferred_status.value(), expected.value()))
+      << "inferred: " << ShapeUtil::HumanString(inferred_status.value())
+      << " expected: " << ShapeUtil::HumanString(expected.value());
+}
+
+TEST_F(ShapeInferenceTest, UnboundedBroadcastInDimUnsupportedOutput) {
+  StatusOr<Shape> operand = ParseShape("f32[<=2, ?]");
+  StatusOr<Shape> expected = ParseShape("f32[<=2, 3, ?]");
+  ASSERT_IS_OK(operand.status());
+  ASSERT_IS_OK(expected.status());
+  StatusOr<Shape> inferred_status =
+      ShapeInference::InferBroadcastShape(operand.value(), expected.value(),
+                                          /*broadcast_dimensions=*/{0, 2});
+  EXPECT_THAT(inferred_status.status().message(),
+              HasSubstr("is_unbounded_dynamic"));
+}
+
+TEST_F(ShapeInferenceTest, UnboundedBroadcastInDimUnsupported) {
+  StatusOr<Shape> operand = ParseShape("f32[<=2, 4]");
+  StatusOr<Shape> expected = ParseShape("f32[<=2, ?, 4]");
+  ASSERT_IS_OK(operand.status());
+  ASSERT_IS_OK(expected.status());
+  StatusOr<Shape> inferred_status = ShapeInference::InferBroadcastShape(
+      operand.value(), /*broadcast_sizes=*/{2, Shape::kUnboundedSize, 4});
+  EXPECT_THAT(inferred_status.status().message(),
+              HasSubstr("Non-broadcast dimensions must not be dynamic."));
+}
+
 TEST_P(UnboundedClampOpShapeInferenceTest, UnboundedClamp) {
   StatusOr<Shape> lhs = ParseShape(GetParam()[0]);
   StatusOr<Shape> rhs = ParseShape(GetParam()[1]);
