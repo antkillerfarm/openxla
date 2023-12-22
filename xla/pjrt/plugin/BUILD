@@ -37,6 +37,6 @@ package(
 cc_library(
     name = "plugin",
     deps = [
-        #"//xla/pjrt/plugin/example:example_lib",
+        #"//xla/pjrt/plugin/vsi/npu:libnpu.so",
     ],
 )

@@ -86,6 +86,7 @@ xla::Status LoadPjrtPlugin(absl::string_view device_type,
       "LoadPjrtPlugin is not implemented on windows yet.");
 #else
   void* library = dlopen(library_path.data(), RTLD_LAZY);
+  // LOG(INFO) << "XXTT dlerror 0: " << dlerror();
   if (library == nullptr) {
     return tsl::errors::Internal("Failed to open ", library_path, ": ",
                                  dlerror());
