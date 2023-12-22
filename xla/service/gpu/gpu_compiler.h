@@ -105,6 +105,12 @@ class GpuCompiler : public LLVMCompiler {
   std::string target_triple() const { return target_triple_; }
   std::string data_layout() const { return data_layout_; }
 
+  // Returns the TargetConfig, either from the module debug options, or from the
+  // CompilationOptions, or if both of those are absent, from the attached GPU.
+  static StatusOr<TargetConfig> GetTargetConfig(
+      const Compiler::CompileOptions& options, const DebugOptions& debug_opts,
+      se::StreamExecutor* executor);
+
  protected:
   struct BackendCompileResult {
     std::string asm_text;
