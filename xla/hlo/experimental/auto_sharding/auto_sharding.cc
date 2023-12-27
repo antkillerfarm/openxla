@@ -1651,6 +1651,7 @@ AutoShardingSolverResult CallSolver(
     const AliasSet& alias_set, const std::vector<NodeStrategyIdx>& s_hint,
     const bool compute_iis, const int64_t solver_timeout_in_seconds,
     const AutoShardingOption& option, std::optional<double> max_cost,
+    absl::string_view request_name,
     const absl::flat_hash_map<std::string, const HloInstruction*>&
         sharding_propagation_solution,
     bool deterministic_mode) {
@@ -1672,6 +1673,7 @@ AutoShardingSolverResult CallSolver(
   request.set_compute_iis(compute_iis);
   request.set_saltiplier(kSaltiplier);
   request.set_deterministic_mode(deterministic_mode);
+  request.set_request_name(request_name);
   if (max_cost) {
     request.mutable_max_cost()->set_coeff(*max_cost);
   }
@@ -3550,9 +3552,10 @@ StatusOr<AutoShardingResult> AutoShardingImplementation::RunAutoSharding(
     std::vector<spmd::NodeStrategyIdx> s_val;
     std::vector<spmd::EdgeStrategyIdx> e_val;
     double objective = -1.0;
+    std::string request_name = absl::StrCat("mesh_idx_", mesh_idx);
     auto solver_result =
         Solve(*module, *hlo_live_range, liveness_node_set, strategy_map,
-              strategy_groups, cost_graph, alias_set, option_,
+              strategy_groups, cost_graph, alias_set, option_, request_name,
               sharding_propagation_solution);
     if (solver_result.skip_auto_sharding) {
       return AutoShardingResult::kModuleUnchangedNoShardingPerformed;

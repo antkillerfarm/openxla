@@ -37,11 +37,12 @@ AutoShardingSolverResult Solve(
     const StrategyGroups& strategy_groups, const CostGraph& cost_graph,
     const AliasSet& alias_set, const AutoShardingOption& option,
     const absl::flat_hash_map<std::string, const HloInstruction*>&
-        sharding_propagation_solution) {
+        sharding_propagation_solution,
+    absl::string_view request_prefix) {
   return CallSolver(hlo_module, hlo_live_range, liveness_node_set, strategy_map,
                     strategy_groups, cost_graph, alias_set, /*s_hint*/ {},
                     /*compute_iis*/ true, option.solver_timeout_in_seconds,
-                    option, /*max_cost*/ std::nullopt,
+                    option, /*max_cost*/ std::nullopt, request_prefix,
                     sharding_propagation_solution, /*deterministic mode*/ true);
 }
 
