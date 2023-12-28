@@ -14,21 +14,22 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/hlo/utils/hlo_live_range.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/literal.h"
+#include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/service/hlo_alias_analysis.h"
-#include "xla/service/hlo_ordering.h"
 #include "xla/service/hlo_value.h"
-#include "xla/status_macros.h"
 #include "xla/tests/hlo_test_base.h"
 #include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -446,5 +447,45 @@ ENTRY %main (a: f32[4096], b: f32[4096]) -> f32[4096] {
 
   CheckSchedule();
 }
+
+TEST_F(HloLiveRangeTest, Call) {
+  std::string hlo_string = R"(
+    HloModule Call, is_scheduled=true
+
+    %called_computation (param_0: f32[4096]) -> f32[4096] {
+      %param_0 = f32[4096]{0} parameter(0)
+      ROOT %negate_0 = f32[4096]{0} negate(f32[4096]{0} %param_0)
+    }
+
+    ENTRY %main (a: f32[4096]) -> f32[4096] {
+      %a = f32[4096]{0} parameter(0)
+      %b = f32[4096]{0} negate(%a)
+      %c = f32[4096]{0} call(%b), to_apply=%called_computation
+      %d = f32[4096]{0} negate(%c)
+      ROOT %e = f32[4096]{0} add(%c, %d)
+    })";
+
+  TF_ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(hlo_string));
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> aa,
+                          HloAliasAnalysis::Run(module_.get()));
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloLiveRange> hlo_live_range,
+                          HloLiveRange::Run(module_->schedule(), *aa,
+                                            module_->entry_computation()));
+
+  absl::flat_hash_map<std::string, std::pair<int32_t, int32_t>> inst_ranges;
+  for (auto& [value, time_bound] : hlo_live_range->buffer_live_ranges()) {
+    inst_ranges[value->instruction()->name()] = {time_bound.start,
+                                                 time_bound.end};
+  }
+
+  EXPECT_EQ(inst_ranges["a"], std::make_pair(0, 7));
+  EXPECT_EQ(inst_ranges["b"], std::make_pair(1, 3));
+  EXPECT_EQ(inst_ranges["negate_0"], std::make_pair(3, 6));
+  EXPECT_EQ(inst_ranges["d"], std::make_pair(5, 6));
+  EXPECT_EQ(inst_ranges["e"], std::make_pair(6, 7));
+}
+
 }  // namespace
 }  // namespace xla
