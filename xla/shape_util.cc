@@ -802,6 +802,16 @@ Shape ShapeUtil::PrependMajorDimension(int64_t bound, Shape shape) {
   return true;
 }
 
+/* static */ bool ShapeUtil::SameElementCount(const Shape& lhs,
+                                              const Shape& rhs) {
+  CHECK(lhs.IsArray());
+  CHECK(rhs.IsArray());
+  if (lhs.is_unbounded_dynamic() || rhs.is_unbounded_dynamic()) {
+    return true;
+  }
+  return ElementsIn(lhs) == ElementsIn(rhs);
+}
+
 /* static */ bool ShapeUtil::SameRank(const Shape& lhs, const Shape& rhs) {
   CHECK(lhs.IsArray());
   CHECK(rhs.IsArray());

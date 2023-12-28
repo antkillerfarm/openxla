@@ -2031,19 +2031,22 @@ TEST_F(XlaBuilderTest, UnboundedReduce) {
   EXPECT_TRUE(ShapeUtil::Equal(result, expected));
 }
 
-TEST_F(XlaBuilderTest, UnboundedReshapeUnsupported1) {
+TEST_F(XlaBuilderTest, UnboundedReshape) {
   XlaBuilder b(TestName());
   StatusOr<Shape> operand = ParseShape("f32[?]");
+  StatusOr<Shape> expected = ParseShape("f32[2,3]");
   ASSERT_IS_OK(operand.status());
+  ASSERT_IS_OK(expected.status());
   Reshape(Parameter(&b, 0, operand.value(), "operand"), /*dimensions=*/{0},
           /*new_sizes=*/{2, 3});
-  auto statusor = BuildHloModule(&b);
-  ASSERT_THAT(
-      statusor.status().message(),
-      HasSubstr("Reshaping with unbounded dimensions is not supported."));
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(&b));
+  auto result = module->entry_computation()->root_instruction()->shape();
+  EXPECT_TRUE(ShapeUtil::Equal(result, expected.value()))
+      << "result: " << ShapeUtil::HumanString(result)
+      << " expected: " << ShapeUtil::HumanString(expected.value());
 }
 
-TEST_F(XlaBuilderTest, UnboundedReshapeUnsupported2) {
+TEST_F(XlaBuilderTest, UnboundedReshapeUnsupportedOutputShape) {
   XlaBuilder b(TestName());
   StatusOr<Shape> operand = ParseShape("f32[6]");
   ASSERT_IS_OK(operand.status());
@@ -2052,10 +2055,10 @@ TEST_F(XlaBuilderTest, UnboundedReshapeUnsupported2) {
   auto statusor = BuildHloModule(&b);
   ASSERT_THAT(
       statusor.status().message(),
-      HasSubstr("Reshaping with unbounded dimensions is not supported."));
+      HasSubstr("Reshaping with unbounded result shape is not supported."));
 }
 
-TEST_F(XlaBuilderTest, UnboundedReshapeUnsupported3) {
+TEST_F(XlaBuilderTest, UnboundedReshapeUnsupportedInferredShape) {
   XlaBuilder b(TestName());
   StatusOr<Shape> operand = ParseShape("f32[?]");
   ASSERT_IS_OK(operand.status());
@@ -2063,7 +2066,7 @@ TEST_F(XlaBuilderTest, UnboundedReshapeUnsupported3) {
   auto statusor = BuildHloModule(&b);
   ASSERT_THAT(
       statusor.status().message(),
-      HasSubstr("Reshaping with unbounded dimensions is not supported."));
+      HasSubstr("Reshaping with unbounded result shape is not supported."));
 }
 
 TEST_F(XlaBuilderTest, UnboundedSlice) {

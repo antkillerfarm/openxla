@@ -4182,17 +4182,20 @@ TEST_F(ShapeInferenceTest, UnboundedReduceInvalidReduceDimension) {
               HasSubstr("All reduced tensors must have compatible dimension"));
 }
 
-TEST_F(ShapeInferenceTest, UnboundedReshapeUnsupported1) {
+TEST_F(ShapeInferenceTest, UnboundedReshape) {
   StatusOr<Shape> operand = ParseShape("f32[?]");
+  StatusOr<Shape> expected = ParseShape("f32[2,3]");
   ASSERT_IS_OK(operand.status());
+  ASSERT_IS_OK(expected.status());
   StatusOr<Shape> inferred_status = ShapeInference::InferReshapeShape(
       operand.value(), /*dimensions=*/{0}, /*new_sizes=*/{2, 3}, -1);
-  ASSERT_THAT(
-      inferred_status.status().message(),
-      HasSubstr("Reshaping with unbounded dimensions is not supported."));
+  ASSERT_IS_OK(inferred_status.status());
+  ASSERT_TRUE(ShapeUtil::Equal(inferred_status.value(), expected.value()))
+      << "inferred: " << ShapeUtil::HumanString(inferred_status.value())
+      << " expected: " << ShapeUtil::HumanString(expected.value());
 }
 
-TEST_F(ShapeInferenceTest, UnboundedReshapeUnsupported2) {
+TEST_F(ShapeInferenceTest, UnboundedReshapeUnsupportedOutputShape) {
   StatusOr<Shape> operand = ParseShape("f32[6]");
   ASSERT_IS_OK(operand.status());
   StatusOr<Shape> inferred_status = ShapeInference::InferReshapeShape(
@@ -4200,7 +4203,20 @@ TEST_F(ShapeInferenceTest, UnboundedReshapeUnsupported2) {
       /*new_sizes=*/{Shape::kUnboundedSize, Shape::kUnboundedSize}, -1);
   ASSERT_THAT(
       inferred_status.status().message(),
-      HasSubstr("Reshaping with unbounded dimensions is not supported."));
+      HasSubstr("Reshaping with unbounded result shape is not supported."));
+}
+
+TEST_F(ShapeInferenceTest, UnboundedReshapeUnsupportedMixOfDynamism) {
+  StatusOr<Shape> operand = ParseShape("f32[?, <=3]");
+  StatusOr<Shape> expected = ParseShape("f32[<=3]");
+  ASSERT_IS_OK(operand.status());
+  ASSERT_IS_OK(expected.status());
+  auto inferred_status =
+      ShapeInference::InferReshapeShape(operand.value(), /*dimensions=*/{0},
+                                        /*new_sizes=*/{3}, -1);
+  ASSERT_THAT(inferred_status.status().message(),
+              HasSubstr("Reshape operand with bounded and unbounded dynamism "
+                        "not supported."));
 }
 
 TEST_F(ShapeInferenceTest, UnboundedSlice) {

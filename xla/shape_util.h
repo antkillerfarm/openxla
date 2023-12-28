@@ -183,6 +183,12 @@ class ShapeUtil {
   // Precondition: IsArray(lhs) && IsArray(rhs)
   static bool SameDimensions(const Shape& lhs, const Shape& rhs);
 
+  // Returns whether the LHS and RHS shapes have the same ElementsIn, returning
+  // true if either element has unbounded dimension sizes. note: does not check
+  // element type.
+  // Precondition: IsArray(lhs) && IsArray(rhs)
+  static bool SameElementCount(const Shape& lhs, const Shape& rhs);
+
   // Returns whether the LHS and RHS shapes have the same rank; note: does
   // not check element type.
   // Precondition: IsArray(lhs) && IsArray(rhs)
