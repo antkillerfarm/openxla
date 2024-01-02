@@ -52,6 +52,33 @@ cc_library(
 )
 
 cc_library(
+    name = "custom",
+    srcs = ["custom.cc"],
+    hdrs = ["custom.h"],
+    deps = [
+        ":fusion_emitter",
+        "//xla:statusor",
+        "//xla/hlo/ir:hlo",
+        "//xla/mlir_hlo:lhlo",
+        "//xla/service:elemental_ir_emitter",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:gpu_executable",
+        "//xla/service/gpu:ir_emitter_context",
+        "//xla/service/gpu:kernel_arguments",
+        "//xla/service/gpu:kernel_reuse_cache",
+        "//xla/service/gpu:thunk",
+        "//xla/service/gpu/kernels:custom_fusion",
+        "//xla/service/gpu/kernels:custom_kernel",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//llvm:ir_headers",
+        "@llvm-project//mlir:IR",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
     name = "fusion_emitter",
     srcs = ["fusion_emitter.cc"],
     hdrs = ["fusion_emitter.h"],
@@ -88,6 +115,7 @@ cc_library(
     visibility = ["//xla/service/gpu:__subpackages__"],
     deps = [
         ":copy",
+        ":custom",
         ":fusion_emitter",
         ":in_place_dynamic_update_slice",
         ":input_slices",
