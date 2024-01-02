@@ -71,8 +71,7 @@ class ReductionSplitterVisitor : public DfsHloRewriteVisitor {
         max_shape_dim = input_shape.dimensions(max_reduce_dim);
       }
     }
-    // TODO(tjoerg): Run microbenchmarks to tune this threshold.
-    if (max_shape_dim < 128) {
+    if (max_shape_dim <= 8) {
       return OkStatus();
     }
 
