@@ -22,31 +22,37 @@ limitations under the License.
 #include <map>
 #include <memory>
 #include <optional>
-#include <set>
 #include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/container/btree_set.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
 #include "xla/array.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/tile_assignment.h"
 #include "xla/literal_util.h"
+#include "xla/map_util.h"
 #include "xla/protobuf_util.h"
 #include "xla/service/call_graph.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/status.h"
+#include "xla/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -238,12 +244,15 @@ bool MergeShardingIfCompatible(const HloSharding& to_merge,
     return false;
   }
   // Combine the tile dimension sizes from dst and to_merge.
-  int64_t num_devices = to_merge.tile_assignment().num_elements();
   std::vector<int64_t> merged_tile_dims;
   merged_tile_dims.reserve(dst->tile_assignment().num_dimensions());
+  int64_t num_merge_groups = 1;
+  int64_t num_dst_groups = 1;
   for (int64_t i = 0; i < to_merge.TiledDataRank(); ++i) {
     int64_t dst_dim = dst->tile_assignment().dim(i);
     int64_t merge_dim = to_merge.tile_assignment().dim(i);
+    num_dst_groups *= dst_dim;
+    num_merge_groups *= merge_dim;
     if (dst_dim == 1) {
       merged_tile_dims.push_back(merge_dim);
     } else if (merge_dim == 1) {
@@ -254,6 +263,7 @@ bool MergeShardingIfCompatible(const HloSharding& to_merge,
       return false;
     }
   }
+  const int64_t num_devices = to_merge.tile_assignment().num_elements();
   const int64_t num_tiles = Product(merged_tile_dims);
   if (num_devices % num_tiles != 0 || num_tiles < minimum_tiles) {
     return false;
@@ -273,9 +283,30 @@ bool MergeShardingIfCompatible(const HloSharding& to_merge,
   int64_t replication = num_devices / Product(merged_tile_dims);
   merged_tile_dims.push_back(replication);
   Array<int64_t> merged_tile(merged_tile_dims);
+
+  if (to_merge_man_dim >= 0) {
+    num_merge_groups *= to_merge.tile_assignment().dim(to_merge_man_dim);
+  }
+  if (dst_man_dim >= 0) {
+    num_dst_groups *= dst->tile_assignment().dim(dst_man_dim);
+  }
   // Maps from replication group ID to sorted members.
-  absl::flat_hash_map<int64_t, std::set<int64_t>> merge_group_members;
-  absl::flat_hash_map<int64_t, std::set<int64_t>> dst_group_members;
+  std::vector<absl::btree_set<int64_t>> merge_group_members(num_merge_groups);
+  std::vector<absl::btree_set<int64_t>> dst_group_members(num_dst_groups);
+  const int64_t merge_group_size = num_devices / num_merge_groups;
+  const int64_t dst_group_size = num_devices / num_dst_groups;
+  const auto* merge_begin = to_merge.tile_assignment().array().begin();
+  const auto* dst_begin = dst->tile_assignment().array().begin();
+  for (int64_t i = 0; i < num_merge_groups; ++i) {
+    merge_group_members[i] =
+        absl::btree_set<int64_t>{merge_begin + i * merge_group_size,
+                                 merge_begin + (i + 1) * merge_group_size};
+  }
+  for (int64_t i = 0; i < num_dst_groups; ++i) {
+    dst_group_members[i] = absl::btree_set<int64_t>{
+        dst_begin + i * dst_group_size, dst_begin + (i + 1) * dst_group_size};
+  }
+
   auto get_group_index = [&](absl::Span<const int64_t> tile_indices,
                              const HloSharding& sharding, int64_t manual_dim) {
     int64_t group_id = 0;
@@ -289,16 +320,6 @@ bool MergeShardingIfCompatible(const HloSharding& to_merge,
     }
     return group_id;
   };
-  to_merge.tile_assignment().Each([&](absl::Span<const int64_t> indices,
-                                      int64_t device) {
-    merge_group_members[get_group_index(indices, to_merge, to_merge_man_dim)]
-        .insert(device);
-  });
-  dst->tile_assignment().Each(
-      [&](absl::Span<const int64_t> indices, int64_t device) {
-        dst_group_members[get_group_index(indices, *dst, dst_man_dim)].insert(
-            device);
-      });
   // Try to find the intersection of to_merge and dst replication groups, in
   // order to determine the merged tile assignment.
   Status compatible = merged_tile.EachStatus(
@@ -329,27 +350,32 @@ bool MergeShardingIfCompatible(const HloSharding& to_merge,
         int64_t to_merge_group_id =
             get_group_index(to_merge_index, to_merge, to_merge_man_dim);
         int64_t dst_group_id = get_group_index(dst_index, *dst, dst_man_dim);
-        if (merge_group_members[to_merge_group_id].empty() ||
-            dst_group_members[dst_group_id].empty()) {
+        auto& merge_group_member = merge_group_members[to_merge_group_id];
+        auto& dst_group_member = dst_group_members[dst_group_id];
+        if (merge_group_member.empty() || dst_group_member.empty()) {
           return InvalidArgument("Not compatible");
         }
 
-        int64_t smallest_to_merge =
-            *merge_group_members[to_merge_group_id].begin();
-        int64_t smallest_dst = *dst_group_members[dst_group_id].begin();
-        if (smallest_to_merge < smallest_dst) {
-          if (merge_group_members[to_merge_group_id].count(smallest_dst) == 0) {
+        auto smallest_to_merge = merge_group_member.begin();
+        auto smallest_dst = dst_group_member.begin();
+        if (*smallest_to_merge < *smallest_dst) {
+          auto it = merge_group_member.find(*smallest_dst);
+          if (it == merge_group_member.end()) {
             return InvalidArgument("Not compatible");
           }
-          *device = smallest_dst;
+          *device = *smallest_dst;
+          merge_group_member.erase(it);
+          dst_group_member.erase(smallest_dst);
         } else {
-          if (dst_group_members[dst_group_id].count(smallest_to_merge) == 0) {
+          auto it = dst_group_member.find(*smallest_to_merge);
+          if (it == dst_group_member.end()) {
             return InvalidArgument("Not compatible");
           }
-          *device = smallest_to_merge;
+          *device = *smallest_to_merge;
+          merge_group_member.erase(smallest_to_merge);
+          dst_group_member.erase(it);
         }
-        merge_group_members[to_merge_group_id].erase(*device);
-        dst_group_members[dst_group_id].erase(*device);
+
         return OkStatus();
       });
   if (!compatible.ok()) {
@@ -654,7 +680,6 @@ std::optional<HloSharding> ReshapeSharding(const Shape& source_shape,
 HloSharding PropagateShardingThroughReshape(const Shape& source_shape,
                                             const Shape& target_shape,
                                             const HloSharding& sharding) {
-  HloSharding result = HloSharding::Replicate();
   if (sharding.IsTileMaximal() || sharding.IsManual()) {
     return sharding;
   }
@@ -671,9 +696,10 @@ HloSharding PropagateShardingThroughReshape(const Shape& source_shape,
   // Find intervals of consecutive dimensions that could use ReshapeSharding().
   // then merge the results. We start with the longest interval (whole shape),
   // and if it fails, we find a sub-interval of it or a disjoint interval.
+  HloSharding result = HloSharding::Replicate();
   int64_t start_dim = 0;
   while (start_dim < source_shape.rank()) {
-    int64_t found_compatible = false;
+    bool found_compatible = false;
     // For each start_dim, try to use all dims after it. If that fails, reduce
     // the range.
     for (int64_t end_dim = source_shape.rank(); end_dim > start_dim;
@@ -697,7 +723,6 @@ HloSharding PropagateShardingThroughReshape(const Shape& source_shape,
           // or before it in future intervals, since they have been considered
           // already. Set start_dim to end_dim to start with the next disjoint
           // interval.
-          result.metadata() = sharding.metadata();
           start_dim = end_dim;
           found_compatible = true;
           break;
@@ -710,6 +735,7 @@ HloSharding PropagateShardingThroughReshape(const Shape& source_shape,
       start_dim += 1;
     }
   }
+  result.metadata() = sharding.metadata();
   return result;
 }
 
@@ -2437,7 +2463,7 @@ GroupedSharding GetGroupedReplicatedSharding(const int64_t num_groups,
     absl::c_iota(device_group, device_id);
     device_id = device_group.back() + 1;
   }
-  return GroupedSharding(std::move(device_groups), {data_rank}, {group_size},
+  return GroupedSharding(std::move(device_groups), {data_rank}, {num_groups},
                          data_rank, HloSharding::Replicate(),
                          /*subgroup_manual=*/false);
 }
@@ -2601,6 +2627,8 @@ HloSharding UngroupSharding(const GroupedSharding& grouped_sharding) {
     tiling_dims[dim] *= grouped_sharding.group_dim_sizes[i];
   }
   Array<int64_t> tiling(tiling_dims);
+  CHECK_EQ(tiling.num_elements(), grouped_sharding.device_groups.size() *
+                                      grouped_sharding.device_groups[0].size());
   grouped_tiling.Each([&](absl::Span<const int64_t> indices, int64_t device) {
     std::vector<int64_t> ungrouped_inds(indices.begin(), indices.end());
     for (int64_t g = 0; g < grouped_sharding.device_groups.size(); ++g) {
