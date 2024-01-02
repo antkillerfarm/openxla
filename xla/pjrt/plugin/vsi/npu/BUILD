@@ -1,3 +1,5 @@
+load("//xla:xla.bzl", "xla_cc_test")
+
 cc_library(
     name = "pjrt_c_api_npu_internal",
     srcs = [
@@ -55,5 +57,16 @@ cc_binary(
     visibility = ["//visibility:public"],
     deps = [
         ":npu_lib",
+    ],
+)
+
+xla_cc_test(
+    name = "pjrt_c_api_npu_test",
+    srcs = ["pjrt_c_api_npu_test.cc"],
+    deps = [
+        ":npu_lib",
+        "//xla/pjrt/c:pjrt_c_api_test_common",
+        "//xla/pjrt/c:pjrt_c_api_wrapper_impl",
+        "@com_google_googletest//:gtest_main",
     ],
 )

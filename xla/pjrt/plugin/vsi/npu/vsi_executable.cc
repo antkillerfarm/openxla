@@ -45,6 +45,7 @@ VsiExecutable::VsiExecutable(std::shared_ptr<HloModule> hlo_module,
                  /*hlo_profile_index_map=*/nullptr),
       visitor_(std::move(std::make_unique<BaseVisitor>(executor))),
       executor_(executor) {
+  LOG(INFO) << "XXTT VsiExecutable::VsiExecutable";
   visitor_->ResetVisitStates();
 }
 

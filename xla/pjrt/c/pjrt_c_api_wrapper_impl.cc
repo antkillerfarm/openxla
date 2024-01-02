@@ -571,9 +571,11 @@ PJRT_Error* PJRT_Client_BufferFromHostBuffer(
 
   xla::PjRtFuture<xla::Status>::Promise promise =
       xla::PjRtFuture<xla::Status>::CreatePromise();
-
+  
   std::function<void()> on_done_with_host_buffer = [promise]() mutable {
+    // LOG(INFO) << "XXTT PJRT_Client_BufferFromHostBuffer 1: ";
     promise.Set(xla::OkStatus());
+    // LOG(INFO) << "XXTT PJRT_Client_BufferFromHostBuffer 2: ";
   };
 
   std::unique_ptr<xla::PjRtBuffer> buffer;
@@ -1244,8 +1246,9 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
     std::vector<std::unique_ptr<xla::PjRtBuffer>> cpp_buffer_list;
     std::optional<xla::PjRtFuture<xla::Status>> returned_future;
     bool fill_future = args->device_complete_events != nullptr;
-    PJRT_ASSIGN_OR_RETURN(xla::CompileOptions compile_options,
-                          args->executable->get()->GetCompileOptions());
+    //PJRT_ASSIGN_OR_RETURN(xla::CompileOptions compile_options,
+    //                      args->executable->get()->GetCompileOptions());
+    xla::CompileOptions compile_options;
     if (compile_options.compile_portable_executable) {
       PJRT_ASSIGN_OR_RETURN(
           cpp_buffer_list,

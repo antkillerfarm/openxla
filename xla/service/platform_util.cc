@@ -127,6 +127,7 @@ PlatformUtil::GetSupportedPlatforms() {
                       se::MultiPlatformManager::PlatformWithName(
                           xla::CanonicalPlatformName(platform_name)));
   TF_RETURN_IF_ERROR(Compiler::GetForPlatform(platform).status());
+  LOG(INFO) << "XXTT PlatformUtil::GetPlatform";
   return platform;
 }
 

@@ -26,7 +26,7 @@ limitations under the License.
 
 namespace xla {
 
-static const char kNpuPlatformName[] = "vsi-npu";
+static const char kNpuPlatformName[] = "npu";
 
 StreamExecutorNpuDevice::StreamExecutorNpuDevice(
     int id, std::unique_ptr<LocalDeviceState> local_device_state)
@@ -35,7 +35,7 @@ StreamExecutorNpuDevice::StreamExecutorNpuDevice(
 
 StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorNpuClient() {
   TF_ASSIGN_OR_RETURN(se::Platform * platform,
-                      PlatformUtil::GetPlatform("vsi-npu"));
+                      PlatformUtil::GetPlatform("npu"));
   if (platform->VisibleDeviceCount() != 1) {
     return FailedPrecondition(
         "vsi-npu platform should have exactly one device.");
@@ -55,7 +55,7 @@ StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorNpuClient() {
   devices.push_back(std::move(device));
 
   return std::unique_ptr<PjRtClient>(std::make_unique<PjRtStreamExecutorClient>(
-      "vsi-npu", client, std::move(devices), /*process_index=*/0,
+      "npu", client, std::move(devices), /*process_index=*/0,
       /*allocator=*/nullptr, /*host_memory_allocator=*/nullptr,
       /*should_stage_host_to_device_transfers=*/false,
       /*gpu_run_options=*/nullptr));

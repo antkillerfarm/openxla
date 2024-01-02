@@ -72,7 +72,7 @@ class VsiPlatform : public se::Platform{
 
  private:
   // This platform's name.
-  std::string name_ = "vsi-npu";
+  std::string name_ = "npu";
   // This platform's id.
   Platform::Id id_ = kVsiPlatformId;
 

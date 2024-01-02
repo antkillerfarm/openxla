@@ -1541,9 +1541,9 @@ Status BaseVisitor::HandleIota(HloInstruction* hlo) {
   std::vector<int32_t> dims = {iota_dimension};
   { LOG(INFO) << __FUNCTION__ << " dims in TIM-VX: " << iota_dimension; }
   auto op = graph_->CreateOperation<tim::vx::ops::Broadcast>(outShape, dims);
-  if (shape.element_type() == S32) {
+  if (shape.element_type() == S32 || shape.element_type() == S64) {
     std::vector<int32_t> arrayData;
-    for (int i = 0; i < outShape[iota_dimension]; i++) {
+    for (int32_t i = 0; i < outShape[iota_dimension]; i++) {
       arrayData.push_back(i);
     }
     tim::vx::ShapeType arrayShape = {arrayData.size()};
@@ -1552,9 +1552,20 @@ Status BaseVisitor::HandleIota(HloInstruction* hlo) {
     auto array_tensor = graph_->CreateTensor(arraySpec, arrayData.data());
 
     op->BindInput(array_tensor).BindOutput(out_tensor);
+  } else if (shape.element_type() == U32) {
+    std::vector<uint32_t> arrayData;
+    for (uint32_t i = 0; i < outShape[iota_dimension]; i++) {
+      arrayData.push_back(i);
+    }
+    tim::vx::ShapeType arrayShape = {arrayData.size()};
+    tim::vx::TensorSpec arraySpec(tim::vx::DataType::UINT32, arrayShape,
+                                  tim::vx::TensorAttribute::INPUT);
+    auto array_tensor = graph_->CreateTensor(arraySpec, arrayData.data());
+
+    op->BindInput(array_tensor).BindOutput(out_tensor);
   } else if (shape.element_type() == F32) {
     std::vector<float> arrayData;
-    for (int i = 0; i < outShape[iota_dimension]; i++) {
+    for (int32_t i = 0; i < outShape[iota_dimension]; i++) {
       arrayData.push_back(static_cast<float>(i));
     }
     tim::vx::ShapeType arrayShape = {arrayData.size()};

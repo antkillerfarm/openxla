@@ -109,7 +109,7 @@ void VsiPlatform::UnregisterTraceListener(se::TraceListener* listener) {
 }
 
 static void InitializeVsiPlatform() {
- auto status = se::MultiPlatformManager::PlatformWithName("vsi-npu");
+ auto status = se::MultiPlatformManager::PlatformWithName("npu");
  if (!status.ok()) {
 
     std::unique_ptr<se::Platform> platform(new VsiPlatform);

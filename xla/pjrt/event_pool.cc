@@ -20,6 +20,7 @@ limitations under the License.
 
 #include "absl/synchronization/mutex.h"
 #include "xla/status_macros.h"
+#include "tsl/platform/stacktrace.h"
 
 namespace xla {
 
@@ -60,6 +61,7 @@ void EventPool::ThenRecordEvent(se::Stream* stream, EventPool::Handle& handle) {
 
 StatusOr<EventPool::Handle> EventPool::ThenAllocateAndRecordEvent(
     se::Stream* stream) {
+  // LOG(INFO) << "XXTT EventPool::ThenAllocateAndRecordEvent" << tsl::CurrentStackTrace();
   TF_ASSIGN_OR_RETURN(EventPool::Handle handle,
                       AllocateEvent(stream->parent()));
   ThenRecordEvent(stream, handle);
