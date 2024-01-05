@@ -111,6 +111,7 @@ StatusOr<ExecutionOutput> VsiExecutable::ExecuteAsyncOnStream(
   LOG(INFO) << "ExecuteAsyncOnStream " << module().name()
             << " :: " << (void*)this
             << " :: " << tsl::Env::Default()->GetCurrentThreadId();
+  LOG(INFO) << module().ToString();
 
   se::Stream* stream = run_options->stream();
   se::StreamExecutor* executor = stream->parent();

@@ -57,24 +57,38 @@ class BaseVisitor : public DfsHloVisitorWithDefault {
   std::shared_ptr<tim::vx::Tensor> CreateTensorFromTupleShape(
       const Shape& shape, int64_t index,
       tim::vx::TensorAttribute attr = tim::vx::TensorAttribute::INPUT) {
-    tim::vx::ShapeType timShape;
     tim::vx::Quantization timQuant;
-    std::cout << "shape info 0: ";
+    LOG(INFO) << "shape info 0: ";
 
     auto output_shape = shape.tuple_shapes(index);
+    tim::vx::ShapeType timShape;
 
+#if 0
     if (output_shape.is_static() && output_shape.has_layout()) {
       for (auto d : output_shape.layout().minor_to_major())
         timShape.push_back(output_shape.dimensions(d));
     }
+#else
+    if (output_shape.is_static()) {
+      timShape.resize(shape.rank());
+      for (uint32_t i = 0; i < output_shape.rank(); i++) {
+        timShape[output_shape.rank() - 1 - i] = output_shape.dimensions(i);
+      }
+    }
+#endif
 
     if (timShape.size() == 0) {
       timShape.push_back(1);
     }
-    for (uint32_t i = 0; i < timShape.size(); i++) {
-      std::cout << timShape[i] << " ";
+
+    {
+      std::ostringstream ss;
+      for (uint32_t i = 0; i < timShape.size(); i++) {
+        ss << timShape[i] << " ";
+      }
+      LOG(INFO) << __FUNCTION__ << " : " << ss.str();
     }
-    std::cout << std::endl;
+
     auto type = convertTfPrimitiveTypeToTim(output_shape.element_type());
     std::unique_lock<std::mutex> lock(mutex_);
     tim::vx::TensorSpec timSpec(type, timShape, attr, timQuant);
@@ -86,19 +100,32 @@ class BaseVisitor : public DfsHloVisitorWithDefault {
       tim::vx::TensorAttribute attr = tim::vx::TensorAttribute::INPUT) {
     tim::vx::ShapeType timShape;
     tim::vx::Quantization timQuant;
-    std::cout << "shape info 1: ";
+    LOG(INFO) << "shape info 1: ";
+#if 0
     if (shape.is_static() && shape.has_layout()) {
       for (auto d : shape.layout().minor_to_major())
         timShape.push_back(shape.dimensions(d));
     }
-
+#else
+    if (shape.is_static()) {
+      timShape.resize(shape.rank());
+      for (uint32_t i = 0; i < shape.rank(); i++) {
+        timShape[shape.rank() - 1 - i] = shape.dimensions(i);
+      }
+    }
+#endif
     if (timShape.size() == 0) {
       timShape.push_back(1);
     }
-    for (uint32_t i = 0; i < timShape.size(); i++) {
-      std::cout << timShape[i] << " ";
+
+    {
+      std::ostringstream ss;
+      for (uint32_t i = 0; i < timShape.size(); i++) {
+        ss << timShape[i] << " ";
+      }
+      LOG(INFO) << __FUNCTION__ << " : " << ss.str();
     }
-    std::cout << std::endl;
+
     auto type = convertTfPrimitiveTypeToTim(shape.element_type());
     std::unique_lock<std::mutex> lock(mutex_);
     tim::vx::TensorSpec timSpec(type, timShape, attr, timQuant);
@@ -111,14 +138,18 @@ class BaseVisitor : public DfsHloVisitorWithDefault {
     tim::vx::ShapeType timShape;
     tim::vx::Quantization timQuant;
     for (auto d : shape) timShape.push_back(d);
-    std::cout << "shape info 2: ";
+    LOG(INFO) << "shape info 2: ";
     if (timShape.size() == 0) {
       timShape.push_back(1);
     }
-    for (uint32_t i = 0; i < timShape.size(); i++) {
-      std::cout << timShape[i] << " ";
+
+    {
+      std::ostringstream ss;
+      for (uint32_t i = 0; i < timShape.size(); i++) {
+        ss << timShape[i] << " ";
+      }
+      LOG(INFO) << __FUNCTION__ << " : " << ss.str();
     }
-    std::cout << std::endl;
 
     std::unique_lock<std::mutex> lock(mutex_);
     tim::vx::TensorSpec timSpec(dataType, timShape, attr, timQuant);
@@ -170,10 +201,12 @@ class BaseVisitor : public DfsHloVisitorWithDefault {
     }
   }
 
-  /*dim_index: store the demension index info of the $hlo$ as order
-    major_to_minor: {N, C, ..... } if it should be inserted a transpose, its
-    output would be returned.*/
-  std::shared_ptr<tim::vx::Tensor> InsertTranspose(
+  // XLA Layout -> Device Layout
+  std::shared_ptr<tim::vx::Tensor> InsertTransposeToDeviceLayout(
+      const HloInstruction* hlo, std::vector<uint32_t>& dim_index);
+
+  // Device Layout -> XLA Layout
+  std::shared_ptr<tim::vx::Tensor> InsertTransposeFromDeviceLayout(
       const HloInstruction* hlo, std::vector<uint32_t>& dim_index);
 
   virtual const Shape& GetOutputShape(HloInstruction*) const;

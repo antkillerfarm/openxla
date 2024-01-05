@@ -37,15 +37,13 @@ limitations under the License.
 // #include "tensorflow/core/lib/core/errors.h"
 // #include "tensorflow/stream_executor/lib/initialize.h"
 // #include "tensorflow/compiler/plugin/vsi/driver/custom_kernels_util.h"
+#include "../vsi_utils.h"
 #include "tim/vx/operation.h"
 #include "tim/vx/ops.h"
-
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/window_util.h"
-
-#include "../vsi_utils.h"
 
 namespace xla {
 namespace vsiplugin {
@@ -140,11 +138,10 @@ const Shape& BaseVisitor::GetOutputShape(HloInstruction* inst) const {
 /*the function should only be used by Handlexxxxx function so that the tensor
   maped to {$/hlo/$} has been created.
   the order of tensor's layout is the same as its shape: minjor to major   */
-std::shared_ptr<tim::vx::Tensor> BaseVisitor::InsertTranspose(
+std::shared_ptr<tim::vx::Tensor> BaseVisitor::InsertTransposeToDeviceLayout(
     const HloInstruction* hlo, std::vector<uint32_t>& dim_index) {
   auto shape = hlo->shape();
   size_t dim_size = dim_index.size();
-  std::vector<int64_t> output_dims(dim_size, 1);
   std::vector<uint32_t> perm(dim_size, 1);
 
   auto input_tensor = GetEvaluatedTensorFor(hlo)[0];
@@ -171,15 +168,14 @@ std::shared_ptr<tim::vx::Tensor> BaseVisitor::InsertTranspose(
     ss2 << perm[i] << " ";
     ss3 << shape.dimensions(i) << " ";
   }
-  LOG(INFO) << "InsertTranspose 0: " << is_need_insert_transpose << " : "
-            << dim_size;
-  LOG(INFO) << "InsertTranspose 1: dim_index: " << ss.str();
-  LOG(INFO) << "InsertTranspose 2: minor_to_major: " << ss1.str();
-  LOG(INFO) << "InsertTranspose 3: perm: " << ss2.str();
-  LOG(INFO) << "InsertTranspose 4: hlo->shape: " << ss3.str();
+  LOG(INFO) << "InsertTransposeToDeviceLayout 0: " << is_need_insert_transpose
+            << " : " << dim_size;
+  LOG(INFO) << "InsertTransposeToDeviceLayout 1: dim_index: " << ss.str();
+  LOG(INFO) << "InsertTransposeToDeviceLayout 2: minor_to_major: " << ss1.str();
+  LOG(INFO) << "InsertTransposeToDeviceLayout 3: perm: " << ss2.str();
+  LOG(INFO) << "InsertTransposeToDeviceLayout 4: hlo->shape: " << ss3.str();
 
   if (is_need_insert_transpose) {
-    LOG(INFO) << "InsertTranspose 5: ";
     auto input_shape = input_tensor->GetShape();
     std::vector<uint32_t> output_shape;
     for (auto d : perm) {
@@ -187,13 +183,78 @@ std::shared_ptr<tim::vx::Tensor> BaseVisitor::InsertTranspose(
     }
     auto output_tensor = CreateTensorFromShape(
         convertTfPrimitiveTypeToTim(hlo->shape().element_type()), output_shape,
-        tim::vx::TensorAttribute::OUTPUT);
+        tim::vx::TensorAttribute::TRANSIENT);
     auto transposeOp = graph_->CreateOperation<tim::vx::ops::Transpose>(perm);
     transposeOp->BindInput(input_tensor).BindOutput(output_tensor);
 
     return output_tensor;
   }
   return input_tensor;
+}
+
+std::shared_ptr<tim::vx::Tensor> BaseVisitor::InsertTransposeFromDeviceLayout(
+    const HloInstruction* hlo, std::vector<uint32_t>& dim_index) {
+  auto shape = hlo->shape();
+  size_t dim_size = dim_index.size();
+  std::vector<uint32_t> perm(dim_size, 1);
+
+  auto output_tensor = GetEvaluatedTensorFor(hlo)[0];
+
+  /*check if the layout is {WHCN} , if not, a transpose would be inserted to
+   * covert the layout. */
+  bool is_need_insert_transpose = false;
+  for (int i = 0; i < dim_size; i++) {
+    if (dim_index[i] == shape.layout().minor_to_major()[dim_size - i - 1]) {
+      perm[dim_size - 1 - i] = dim_size - i - 1;
+    } else {
+      is_need_insert_transpose = true;
+      for (int j = 0; j < dim_size; j++) {
+        if (dim_index[i] != shape.layout().minor_to_major()[j]) continue;
+        perm[dim_size - 1 - i] = j;
+        break;
+      }
+    }
+  }
+  std::ostringstream ss, ss1, ss2, ss3;
+  for (int i = 0; i < dim_size; i++) {
+    ss << dim_index[i] << " ";
+    ss1 << shape.layout().minor_to_major()[i] << " ";
+    ss2 << perm[i] << " ";
+    ss3 << shape.dimensions(i) << " ";
+  }
+  LOG(INFO) << "InsertTransposeFromDeviceLayout 0: " << is_need_insert_transpose
+            << " : " << dim_size;
+  LOG(INFO) << "InsertTransposeFromDeviceLayout 1: dim_index: " << ss.str();
+  LOG(INFO) << "InsertTransposeFromDeviceLayout 2: minor_to_major: "
+            << ss1.str();
+  LOG(INFO) << "InsertTransposeFromDeviceLayout 3: perm: " << ss2.str();
+  LOG(INFO) << "InsertTransposeFromDeviceLayout 4: hlo->shape: " << ss3.str();
+
+  if (is_need_insert_transpose) {
+    auto output_shape = output_tensor->GetShape();
+    std::vector<uint32_t> input_shape(dim_size);
+    for (int i = 0; i < dim_size; i++) {
+      input_shape[perm[i]] = output_shape[i];
+    }
+
+    {
+      std::ostringstream ss;
+      for (int i = 0; i < dim_size; i++) {
+        ss << input_shape[i] << " ";
+      }
+      LOG(INFO) << "InsertTransposeFromDeviceLayout 5: input_shape: "
+                << ss.str();
+    }
+
+    auto input_tensor = CreateTensorFromShape(
+        convertTfPrimitiveTypeToTim(hlo->shape().element_type()), input_shape,
+        tim::vx::TensorAttribute::TRANSIENT);
+    auto transposeOp = graph_->CreateOperation<tim::vx::ops::Transpose>(perm);
+    transposeOp->BindInput(input_tensor).BindOutput(output_tensor);
+
+    return input_tensor;
+  }
+  return output_tensor;
 }
 
 template <typename T>
@@ -1199,6 +1260,7 @@ Status BaseVisitor::HandleConcatenate(HloInstruction* hlo) {
 
 Status BaseVisitor::HandleTranspose(HloInstruction* hlo) {
   LOG(INFO) << "PROCESS " << __FUNCTION__;
+  auto* transpose_hlo = Cast<HloTransposeInstruction>(hlo);
   const HloInstruction* input = hlo->operand(0);
   const Shape& in_shape = input->shape();
   const Shape& out_shape = hlo->shape();
@@ -1206,7 +1268,7 @@ Status BaseVisitor::HandleTranspose(HloInstruction* hlo) {
   TF_CHECK_OK(ShapeUtil::ValidateShape(in_shape));
   TF_CHECK_OK(ShapeUtil::ValidateShape(out_shape));
   CHECK(ShapeUtil::SameElementType(in_shape, out_shape));
-  CHECK_EQ(hlo->dimensions().size(), in_shape.rank());
+  CHECK_EQ(transpose_hlo->dimensions().size(), in_shape.rank());
   CHECK_EQ(in_shape.rank(), out_shape.rank());
 
   auto in_tensor = GetEvaluatedTensorFor(input)[0];
@@ -1214,6 +1276,8 @@ Status BaseVisitor::HandleTranspose(HloInstruction* hlo) {
       out_shape, IsRootHlo(hlo) ? tim::vx::TensorAttribute::OUTPUT
                                 : tim::vx::TensorAttribute::TRANSIENT);
 
+  std::vector<uint32_t> dims(in_shape.rank());
+#if 0
   std::vector<uint32_t> tmpdims;
   auto input_minor_to_major = input->shape().layout().minor_to_major();
 
@@ -1221,7 +1285,6 @@ Status BaseVisitor::HandleTranspose(HloInstruction* hlo) {
     tmpdims.push_back(hlo->dimensions(d));
   }
 
-  std::vector<uint32_t> dims;
   for (auto d : tmpdims) {
     uint32_t i = 0;
     for (i = 0; i < input_minor_to_major.size(); i++) {
@@ -1229,6 +1292,38 @@ Status BaseVisitor::HandleTranspose(HloInstruction* hlo) {
     }
     dims.push_back(i);
   }
+
+  {
+    std::ostringstream ss, ss1, ss2;
+    for (int i = 0; i < tmpdims.size(); i++) {
+      ss << tmpdims[i] << " ";
+      ss1 << dims[i] << " ";
+      ss2 << transpose_hlo->dimensions()[i] << " ";
+    }
+    LOG(INFO) << __FUNCTION__ << " tmpdims: " << ss.str();
+    LOG(INFO) << __FUNCTION__ << " dims: " << ss1.str();
+    LOG(INFO) << __FUNCTION__ << " transpose_hlo->dimensions: " << ss2.str();
+  }
+#else
+
+  for (int i = 0; i < in_shape.rank(); i++) {
+    dims[in_shape.rank() - 1 - i] =
+        in_shape.rank() - 1 - transpose_hlo->dimensions()[i];
+  }
+  {
+    std::ostringstream ss, ss1, ss2, ss3;
+    for (int i = 0; i < in_shape.rank(); i++) {
+      // ss << tmpdims[i] << " ";
+      ss1 << dims[i] << " ";
+      ss2 << transpose_hlo->dimensions()[i] << " ";
+      ss3 << out_shape.dimensions(i) << " ";
+    }
+    // LOG(INFO) << __FUNCTION__ << " tmpdims: " << ss.str();
+    LOG(INFO) << __FUNCTION__ << " dims: " << ss1.str();
+    LOG(INFO) << __FUNCTION__ << " transpose_hlo->dimensions: " << ss2.str();
+    LOG(INFO) << __FUNCTION__ << " out_shape: " << ss3.str();
+  }
+#endif
 
   auto transposeOp = graph_->CreateOperation<tim::vx::ops::Transpose>(dims);
   transposeOp->BindInput(in_tensor).BindOutput(out_tensor);
@@ -1775,15 +1870,31 @@ Status BaseVisitor::HandleConvolution(HloInstruction* hlo) {
   std::vector<uint32_t> weight_dim;
   weight_dim.push_back(dnums.kernel_output_feature_dimension());
   weight_dim.push_back(dnums.kernel_input_feature_dimension());
+
+  std::vector<uint32_t> output_dim;
+  output_dim.push_back(dnums.output_batch_dimension());
+  output_dim.push_back(dnums.output_feature_dimension());
+
   for (size_t i = 2; i < lhs_rank; i++) {
     input_dim.push_back(dnums.input_spatial_dimensions(i - 2));
     weight_dim.push_back(dnums.kernel_spatial_dimensions(i - 2));
+    output_dim.push_back(dnums.output_spatial_dimensions(i - 2));
   }
+
+  LOG(INFO) << "dnums.input_batch_dimension: " << dnums.input_batch_dimension();
+  LOG(INFO) << "dnums.input_feature_dimension: "
+            << dnums.input_feature_dimension();
 
   LOG(INFO) << "dnums.kernel_output_feature_dimension: "
             << dnums.kernel_output_feature_dimension();
   LOG(INFO) << "dnums.kernel_input_feature_dimension: "
             << dnums.kernel_input_feature_dimension();
+
+  LOG(INFO) << "dnums.output_batch_dimension: "
+            << dnums.output_batch_dimension();
+  LOG(INFO) << "dnums.output_feature_dimension: "
+            << dnums.output_feature_dimension();
+
   LOG(INFO)
       << "rhs_shape.dimensions()[dnums.kernel_output_feature_dimension()]: "
       << rhs_shape.dimensions()[dnums.kernel_output_feature_dimension()];
@@ -1835,8 +1946,8 @@ Status BaseVisitor::HandleConvolution(HloInstruction* hlo) {
 
   /*prepare input and weight: change layout to WHCN, layout minor to
    * major:{0,1,2,3}*/
-  auto input = InsertTranspose(lhs, input_dim);
-  auto weight = InsertTranspose(rhs, weight_dim);
+  auto input = InsertTransposeToDeviceLayout(lhs, input_dim);
+  auto weight = InsertTransposeToDeviceLayout(rhs, weight_dim);
 
   std::array<uint32_t, 2> ksize = {window.dimensions(1).size(),
                                    window.dimensions(0).size()};
@@ -1976,6 +2087,7 @@ Status BaseVisitor::HandleConvolution(HloInstruction* hlo) {
   auto out_tensor = CreateTensorFromShape(
       hlo->shape(), IsRootHlo(hlo) ? tim::vx::TensorAttribute::OUTPUT
                                    : tim::vx::TensorAttribute::TRANSIENT);
+  vsi_run_tensor_container_[hlo].push_back(out_tensor);
   auto out_tensor_spec = out_tensor->GetSpec();
   auto out_tensor_shape = out_tensor_spec.GetShapeType();
   std::vector<uint32_t> out_tensor_tmp_shape;
@@ -2003,29 +2115,44 @@ Status BaseVisitor::HandleConvolution(HloInstruction* hlo) {
   // output shape: [5, 5, 1, 6]
   // lhs batch_dimension is 0, output batch_dimension is 2.
 
-  if (dnums.input_batch_dimension() != dnums.output_batch_dimension()) {
-    perm = {2, 3, 0, 1};
-    out_tensor_tmp_shape = {out_tensor_shape[2], out_tensor_shape[3],
-                            out_tensor_shape[0], out_tensor_shape[1]};
-    LOG(INFO) << __FUNCTION__ << " BackpropFilter X";
-  } else {
-    perm = {2, 0, 1, 3};
-    out_tensor_tmp_shape = {out_tensor_shape[1], out_tensor_shape[2],
-                            out_tensor_shape[0], out_tensor_shape[3]};
-    LOG(INFO) << __FUNCTION__ << " Other Conv X";
-  }
+  bool need_transpose_output = (dnums.output_feature_dimension() != 1);
+  bool is_backprop_filter =
+      (dnums.input_batch_dimension() != dnums.output_batch_dimension());
 
-  {
-    std::ostringstream ss;
-    for (int i = 0; i < out_tensor_tmp_shape.size(); i++) {
-      ss << out_tensor_tmp_shape[i] << ", ";
-    }
-    LOG(INFO) << __FUNCTION__ << " out_tensor_tmp_shape: " << ss.str();
-  }
-  tim::vx::TensorSpec out_tensor_tmp_sec(out_tensor_spec.GetDataType(),
-                                         out_tensor_tmp_shape,
-                                         tim::vx::TensorAttribute::TRANSIENT);
-  auto out_tensor_tmp = graph_->CreateTensor(out_tensor_tmp_sec);
+  LOG(INFO) << "need_transpose_output: " << need_transpose_output;
+  LOG(INFO) << "is_backprop_filter: " << is_backprop_filter;
+
+  // std::ostringstream ss, ss1;
+  // for (int i = 0; i < dim_size; i++) {
+  //   ss << output_dim[i] << " ";
+  //   ss1 << result_shape.layout().minor_to_major()[i] << " ";
+  // }
+  // LOG(INFO) << "InsertTransposeOutput 1: dim_index: " << ss.str();
+  // LOG(INFO) << "InsertTranspose 2: minor_to_major: " << ss1.str();
+
+  auto out_tensor_tmp = InsertTransposeFromDeviceLayout(hlo, output_dim);
+  // if (need_transpose_output) {
+  //   if (is_backprop_filter) {
+  //     perm = {2, 3, 0, 1};
+  //     out_tensor_tmp_shape = {out_tensor_shape[2], out_tensor_shape[3],
+  //                             out_tensor_shape[0], out_tensor_shape[1]};
+  //   } else {
+  //     perm = {2, 0, 1, 3};
+  //     out_tensor_tmp_shape = {out_tensor_shape[1], out_tensor_shape[2],
+  //                             out_tensor_shape[0], out_tensor_shape[3]};
+  //   }
+  //   {
+  //     std::ostringstream ss;
+  //     for (int i = 0; i < out_tensor_tmp_shape.size(); i++) {
+  //       ss << out_tensor_tmp_shape[i] << ", ";
+  //     }
+  //     LOG(INFO) << __FUNCTION__ << " out_tensor_tmp_shape: " << ss.str();
+  //   }
+  //   tim::vx::TensorSpec out_tensor_tmp_sec(out_tensor_spec.GetDataType(),
+  //                                          out_tensor_tmp_shape,
+  //                                          tim::vx::TensorAttribute::TRANSIENT);
+  //   out_tensor_tmp = graph_->CreateTensor(out_tensor_tmp_sec);
+  // }
 
   if (need_slice) {
     // Conv2d do not support negative pad, negative pad is equivalent to slice.
@@ -2077,10 +2204,12 @@ Status BaseVisitor::HandleConvolution(HloInstruction* hlo) {
     convOp->BindInput(input).BindInput(weight).BindOutput(out_tensor_tmp);
   }
 
-  auto transposeOp = graph_->CreateOperation<tim::vx::ops::Transpose>(perm);
-  transposeOp->BindInput(out_tensor_tmp).BindOutput(out_tensor);
+  // if (need_transpose_output) {
+  //   auto transposeOp =
+  //   graph_->CreateOperation<tim::vx::ops::Transpose>(perm);
+  //   transposeOp->BindInput(out_tensor_tmp).BindOutput(out_tensor);
+  // }
 
-  vsi_run_tensor_container_[hlo].push_back(out_tensor);
   return ::tsl::OkStatus();
 }
 
