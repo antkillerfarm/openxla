@@ -902,7 +902,7 @@ static CUmemLocationType ToCudaLocationType(
       return CU_MEM_LOCATION_TYPE_INVALID;
     case GpuDriver::MemLocationType::kDevice:
       return CU_MEM_LOCATION_TYPE_DEVICE;
-#if CUDA_VERSION >= 12000
+#if CUDA_VERSION >= 12030
     case GpuDriver::MemLocationType::kHost:
       return CU_MEM_LOCATION_TYPE_HOST;
     case GpuDriver::MemLocationType::kHostNuma:
@@ -949,7 +949,7 @@ static CUmemAllocationType ToCudaAllocationType(
   mem_pool_props.allocType = ToCudaAllocationType(allocation_type);
   mem_pool_props.handleTypes = CU_MEM_HANDLE_TYPE_NONE;
   mem_pool_props.location = mem_location;
-#if CUDA_VERSION >= 12000
+#if CUDA_VERSION >= 12030
   mem_pool_props.maxSize = max_pool_size;
 #endif  // CUDA_VERSION >= 12000
   // cuda graph requires reserved space initialized to 0

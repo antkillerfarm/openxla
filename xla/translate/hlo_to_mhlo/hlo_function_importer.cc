@@ -664,6 +664,70 @@ StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstruction(
   return importer.ImportInstructionWithLayout(instr, operands, builder, mode);
 }
 
+Type getQuantizedType(mlir::DictionaryAttr& backend_config) {
+  std::vector<double> scales;
+  std::vector<int64_t> zero_points;
+  int64_t quantization_dimension = -1, storage_max = 0, storage_min = 0;
+  Type storage_type, expressed_type;
+
+  auto scales_attr = backend_config.get("scale");
+  if (scales_attr) {
+    for (auto scale_attr : scales_attr.cast<mlir::ArrayAttr>()) {
+      scales.push_back(scale_attr.cast<mlir::FloatAttr>().getValueAsDouble());
+    }
+  }
+
+  auto zero_points_attr = backend_config.get("zero_point");
+  if (zero_points_attr) {
+    for (auto zero_point_attr : zero_points_attr.cast<mlir::ArrayAttr>()) {
+      zero_points.push_back(zero_point_attr.cast<mlir::IntegerAttr>().getInt());
+    }
+  }
+
+  auto quantization_dimension_attr =
+      backend_config.get("quantization_dimension");
+  if (quantization_dimension_attr) {
+    quantization_dimension =
+        quantization_dimension_attr.cast<mlir::IntegerAttr>().getInt();
+  }
+
+  auto storage_max_attr = backend_config.get("storage_max");
+  if (storage_max_attr) {
+    storage_max = storage_max_attr.cast<mlir::IntegerAttr>().getInt();
+  }
+
+  auto storage_min_attr = backend_config.get("storage_min");
+  if (storage_min_attr) {
+    storage_min = storage_min_attr.cast<mlir::IntegerAttr>().getInt();
+  }
+
+  auto storage_type_attr = backend_config.get("storage_type");
+  if (storage_type_attr) {
+    storage_type = storage_type_attr.cast<mlir::TypeAttr>().getValue();
+    //.cast<mlir::ShapedType>()
+    //.getElementType();
+  }
+
+  auto expressed_type_attr = backend_config.get("expressed_type");
+  if (expressed_type_attr) {
+    expressed_type = expressed_type_attr.cast<mlir::TypeAttr>().getValue();
+    //.cast<mlir::ShapedType>()
+    //.getElementType();
+  }
+
+  auto is_signed = storage_type.cast<mlir::IntegerType>().isSigned();
+
+  if (quantization_dimension != -1) {
+    return mlir::quant::UniformQuantizedPerAxisType::get(
+        is_signed, storage_type, expressed_type, scales, zero_points,
+        quantization_dimension, storage_min, storage_max);
+  } else {
+    return mlir::quant::UniformQuantizedType::get(
+        is_signed, storage_type, expressed_type, scales[0], zero_points[0],
+        storage_min, storage_max);
+  }
+}
+
 StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
     const HloInstruction* instruction,
     const llvm::SmallVectorImpl<mlir::Value>& operands,
@@ -933,6 +997,25 @@ StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
                 "Couldn't parse backend config into a dictionary attribute");
 
           attributes.push_back(builder_->getNamedAttr("backend_config", attr));
+          auto backend_config = attr.cast<mlir::DictionaryAttr>();
+          if (custom_call->custom_call_target() ==
+              "stablehlo.uniform_quantize") {
+            return func_builder
+                ->create<mlir::mhlo::UniformQuantizeOp>(
+                    loc,
+                    mlir::RankedTensorType::get(
+                        result_type.cast<RankedTensorType>().getShape(),
+                        getQuantizedType(backend_config)),
+                    operands)
+                .getOperation();
+          }
+
+          if (custom_call->custom_call_target() ==
+              "stablehlo.uniform_dequantize") {
+            return func_builder
+                ->create<mlir::mhlo::UniformDequantizeOp>(
+                    loc, result_type, operands) .getOperation();
+          }
         }
       } else {
         attributes.push_back(builder_->getNamedAttr(
