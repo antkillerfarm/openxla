@@ -1428,9 +1428,10 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
     std::vector<std::unique_ptr<xla::PjRtBuffer>> cpp_buffer_list;
     std::optional<xla::PjRtFuture<xla::Status>> returned_future;
     bool fill_future = args->device_complete_events != nullptr;
-    PJRT_ASSIGN_OR_RETURN(xla::CompileOptions compile_options,
-                          args->executable->get()->GetCompileOptions());
-    if (compile_options.compile_portable_executable) {
+    // PJRT_ASSIGN_OR_RETURN(xla::CompileOptions compile_options,
+    //                       args->executable->get()->GetCompileOptions());
+    // if (compile_options.compile_portable_executable) {
+    if (false) {
       PJRT_ASSIGN_OR_RETURN(
           cpp_buffer_list,
           args->executable->get()->ExecutePortable(

@@ -1,0 +1,67 @@
+/* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#ifndef XLA_STREAM_EXECUTOR_VSI_DRIVER_VSI_COMPILER_H_
+#define XLA_STREAM_EXECUTOR_VSI_DRIVER_VSI_COMPILER_H_
+
+#include <memory>
+#include <vector>
+
+#include "xla/service/compiler.h"
+#include "xla/service/executable.h"
+#include "tsl/platform/statusor.h"
+
+namespace xla {
+namespace vsiplugin {
+
+// Despite the inherited "compiler" naming, InterpreterCompiler does not
+// perform any lowering as other backends do. It operates at HLO-level for
+// and is responsible for generating an InterpreterExecutable.
+// Refer to interpreter/README.md for more.
+class VsiCompiler : public Compiler {
+ public:
+  VsiCompiler() {}
+  ~VsiCompiler() override {}
+
+  StatusOr<std::unique_ptr<HloModule>> RunHloPasses(
+      std::unique_ptr<HloModule> hlo_module, se::StreamExecutor* executor,
+      const CompileOptions& options) override;
+  StatusOr<std::unique_ptr<Executable>> RunBackend(
+      std::unique_ptr<HloModule> hlo_module, se::StreamExecutor* stream_exec,
+      const CompileOptions& options) override;
+  StatusOr<std::vector<std::unique_ptr<Executable>>> Compile(
+      std::unique_ptr<HloModuleGroup> module_group,
+      std::vector<std::vector<se::StreamExecutor*>> stream_execs,
+      const CompileOptions& options) override;
+
+  StatusOr<std::vector<std::unique_ptr<AotCompilationResult>>>
+  CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
+                     const AotCompilationOptions& aot_options) override;
+
+  HloCostAnalysis::ShapeSizeFunction ShapeSizeBytesFunction() const override;
+
+  se::Platform::Id PlatformId() const override;
+
+ private:
+  Status RunHloOptimization(HloModule* hlo_module);
+
+  TF_DISALLOW_COPY_AND_ASSIGN(VsiCompiler);
+};
+
+}  // namespace vsiplugin
+}  // namespace xla
+
+
+#endif
