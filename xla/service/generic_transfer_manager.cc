@@ -24,6 +24,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/primitive_util.h"
@@ -35,8 +37,6 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/types.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
 
 namespace xla {
 
@@ -148,9 +148,11 @@ void GenericTransferManager::TransferLiteralFromDevice(
     se::Stream* stream, const ShapedBuffer& device_buffer,
     MutableBorrowingLiteral literal, std::function<void(Status)> done,
     const TransferMetadata* transfer_metadata) {
-  VLOG(2) << "transferring literal from device ordinal "
+  VLOG(1) << "transferring literal from device ordinal "
           << stream->parent()->device_ordinal()
-          << "; device buffer: " << device_buffer;
+          << "; device buffer: " << device_buffer
+          << "; device_buffer.device_ordinal: "
+          << device_buffer.device_ordinal();
 
   Status status = [&]() -> Status {
     TF_RET_CHECK(stream->parent()->device_ordinal() ==

@@ -979,7 +979,7 @@ inline void AsyncValue::Destroy() {
     return;
   }
 
-  GetTypeInfo().destructor(this);
+  // GetTypeInfo().destructor(this);
   if (was_ref_counted) internal::AlignedFree(this);
 }
 

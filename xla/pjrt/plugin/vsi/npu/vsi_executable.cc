@@ -21,9 +21,9 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "vsi_transfer_manager.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
+#include "vsi_transfer_manager.h"
 #include "xla/service/transfer_manager.h"
 
 namespace xla {
@@ -118,8 +118,9 @@ StatusOr<ExecutionOutput> VsiExecutable::ExecuteAsyncOnStream(
   }
   for (auto& argument : arguments) {
     const ShapeTree<MaybeOwningDeviceMemory>& buffers = argument.Buffers();
-    argument_buffers.push_back(ShapedBuffer(buffers.shape(),
-                                            /*device_ordinal=*/device_ordinal));
+    argument_buffers.push_back(
+        ShapedBuffer(buffers.shape(),
+                     /*device_ordinal=*/executor->device_ordinal()));
     auto in_it = buffers.begin();
     auto out_it = argument_buffers.back().buffers().begin();
     for (; in_it != buffers.end(); ++in_it, ++out_it) {
