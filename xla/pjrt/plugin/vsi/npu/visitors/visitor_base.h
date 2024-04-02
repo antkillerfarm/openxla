@@ -20,12 +20,6 @@ limitations under the License.
 #include <string>
 #include <unordered_map>
 
-// #include "tensorflow/compiler/plugin/vsi/driver/vsi_executor.h"
-// #include "tensorflow/compiler/xla/service/dfs_hlo_visitor.h"
-// #include "tensorflow/compiler/xla/service/hlo_evaluator.h"
-// #include "tensorflow/compiler/xla/service/hlo_instruction.h"
-// #include "tensorflow/compiler/xla/service/shaped_buffer.h"
-// #include "tensorflow/compiler/xla/shape.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "../vsi_executor.h"

@@ -25,8 +25,6 @@ limitations under the License.
 namespace xla {
 namespace vsiplugin {
 
-const int invalid_index = 0x7fffff;
-
 class HostEvent : public stream_executor::internal::EventInterface {
  public:
   HostEvent() : notification_(std::make_shared<absl::Notification>()) {
@@ -51,6 +49,12 @@ VsiExecutor::VsiExecutor(std::shared_ptr<tim::vx::Context> vsiCtx,
     : vsi_context_(vsiCtx), ordinal_(device_ordinal) {
   std::unique_lock<std::mutex> lock(mutex_);
   // kVsiGraphContainer[ordinal_] = vsi_context_->CreateGraph();
+
+  env_config_.inference_opt_mode = 0;
+  const char* env = std::getenv("INFERENCE_OPT_MODE");
+  if (env != nullptr) {
+    CHECK(absl::SimpleAtoi(env, &(env_config_.inference_opt_mode)));
+  }
 }
 
 VsiExecutor::~VsiExecutor() { LOG(FATAL) << "Not Implemented"; }

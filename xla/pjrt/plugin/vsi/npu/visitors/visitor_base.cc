@@ -90,9 +90,16 @@ StatusOr<std::vector<std::shared_ptr<tim::vx::Tensor>>> BaseVisitor::Evaluate(
     const HloComputation& computation,
     std::vector<Literal>& argument_literals) {
   arg_literals_ = std::move(argument_literals);
+
+  if (!is_build_) {
+    LOG(INFO) << "BaseVisitor::evaluate 1";
+    TF_RETURN_IF_ERROR(computation.Accept(this));
+    graph_->PrintGraph();
+  }
+
   auto input_tensors = graph_->InputsTensor();
 
-  if (is_build_ && !arg_literals_.empty()) {
+  if (!arg_literals_.empty()) {
     // input_tensors include not only mutable parameters(arg_literals_) but also
     // const parameters.
     LOG(INFO) << "BaseVisitor::evaluate 0";
@@ -112,11 +119,8 @@ StatusOr<std::vector<std::shared_ptr<tim::vx::Tensor>>> BaseVisitor::Evaluate(
         }
       }
     }
-  } else {
-    LOG(INFO) << "BaseVisitor::evaluate 1";
-    TF_RETURN_IF_ERROR(computation.Accept(this));
   }
-  graph_->PrintGraph();
+
   std::vector<std::shared_ptr<tim::vx::Tensor>> fault_result;
   if (!graph_->Compile()) {
     LOG(FATAL) << "Compile graph fail.";
@@ -1012,7 +1016,7 @@ Status BaseVisitor::HandleBroadcast(HloInstruction* hlo) {
                             : tim::vx::TensorAttribute::TRANSIENT);
 
   std::vector<uint32_t> out_shape(out_tensor->GetShape().begin(),
-                                 out_tensor->GetShape().end());
+                                  out_tensor->GetShape().end());
 
   std::vector<int32_t> dimensions;
   for (const auto& e : broadcast_hlo->dimensions()) {
@@ -1623,7 +1627,7 @@ Status BaseVisitor::HandleIota(HloInstruction* hlo) {
                             : tim::vx::TensorAttribute::TRANSIENT);
 
   std::vector<uint32_t> outShape(out_tensor->GetShape().begin(),
-                                out_tensor->GetShape().end());
+                                 out_tensor->GetShape().end());
   {
     std::ostringstream ss;
     for (int i = 0; i < outShape.size(); i++) {
@@ -1686,7 +1690,7 @@ Status BaseVisitor::HandleDot(HloInstruction* hlo) {
   const HloInstruction* rhs = hlo->operand(1);
 
   auto lhs_tensor = GetEvaluatedTensorFor(lhs)[0];
-  auto rhs_tensor = GetEvaluatedTensorFor(rhs)[0];
+  // auto rhs_tensor = GetEvaluatedTensorFor(rhs)[0];
   auto out_tensor = CreateTensorFromShape(
       shape, IsRootHlo(hlo) ? tim::vx::TensorAttribute::OUTPUT
                             : tim::vx::TensorAttribute::TRANSIENT);
@@ -1776,6 +1780,28 @@ Status BaseVisitor::HandleDot(HloInstruction* hlo) {
 
   auto matmul = graph_->CreateOperation<tim::vx::ops::Matmul>(
       transpose_a, transpose_b, false, false);
+
+  std::shared_ptr<tim::vx::Tensor> rhs_tensor = nullptr;
+  if (executor_->env_config_.inference_opt_mode && rhs->operand_count() > 0) {
+    const HloInstruction* trans_param = rhs->operand(0);
+    bool isParam = (trans_param->opcode() == HloOpcode::kParameter);
+    LOG(INFO) << __FUNCTION__ << " trans_param: " << trans_param->name()
+              << ",rhs->shape:" << rhs->shape();
+
+    if (isParam) {
+      LOG(INFO) << "create rhs->shape:" << rhs->shape();
+      rhs_tensor = CreateTensorFromShape(rhs->shape(),
+                                          tim::vx::TensorAttribute::CONSTANT);
+      auto& argument_buffer =
+          arg_literals_[trans_param->parameter_number()];
+      ShapeIndex shapeIndex({});
+      void* buffer = argument_buffer.untyped_data(shapeIndex);
+      rhs_tensor->CopyDataToTensor(buffer);
+    }
+  } else {
+    rhs_tensor = GetEvaluatedTensorFor(rhs)[0];
+  }
+
   matmul->BindInput(lhs_tensor).BindInput(rhs_tensor).BindOutput(out_tensor);
 
   vsi_run_tensor_container_[hlo].push_back(out_tensor);
@@ -1798,7 +1824,7 @@ Status BaseVisitor::HandleParameter(HloInstruction* hlo) {
     ShapeIndex shapeIndex({});
     void* buffer = input_literal.untyped_data(shapeIndex);
     auto timTensor = CreateTensorFromShape(input_literal.shape());
-    timTensor->CopyDataToTensor(buffer);
+    // timTensor->CopyDataToTensor(buffer);
     vsi_run_tensor_container_[hlo].push_back(timTensor);
     kVsiInputId_[hlo->parameter_number()] = timTensor->GetId();
   }

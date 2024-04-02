@@ -18,15 +18,6 @@ limitations under the License.
 
 #include <vector>
 
-// #include "tensorflow/compiler/xla/service/generic_transfer_manager.h"
-// #include "tensorflow/compiler/xla/service/transfer_manager.h"
-// #include "tensorflow/compiler/xla/shape_tree.h"
-// #include "tensorflow/compiler/xla/statusor.h"
-// #include "tensorflow/compiler/xla/xla_data.pb.h"
-// #include "tensorflow/core/platform/macros.h"
-// #include "tensorflow/core/platform/stream_executor_no_cuda.h"
-// #include "tensorflow/core/platform/types.h"
-
 #include "xla/service/generic_transfer_manager.h"
 #include "xla/service/transfer_manager.h"
 
