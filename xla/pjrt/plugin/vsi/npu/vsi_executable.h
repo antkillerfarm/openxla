@@ -18,43 +18,46 @@ limitations under the License.
 
 #include <memory>
 
-
-#include "xla/service/executable.h"
-#include "xla/stream_executor/stream_executor.h"
-#include "vsi_executor.h"
-#include "visitors/visitor_base.h"
 #include "tim/vx/context.h"
 #include "tim/vx/graph.h"
+#include "visitors/visitor_base.h"
+#include "vsi_executor.h"
+#include "xla/service/executable.h"
+#include "xla/stream_executor/stream_executor.h"
 namespace se = stream_executor;
 
-namespace xla{
-namespace vsiplugin{
+namespace xla {
+namespace vsiplugin {
 
-class VsiExecutable : public Executable  {
-public:
-    explicit VsiExecutable( std::shared_ptr<HloModule> hlo_module,
-    VsiExecutor *executor);
+class VsiExecutable : public Executable {
+ public:
+  explicit VsiExecutable(std::shared_ptr<HloModule> hlo_module,
+                         VsiExecutor* executor);
 
-    ~VsiExecutable();
+  ~VsiExecutable();
 
-    StatusOr<ExecutionOutput> ExecuteAsyncOnStream(
-        const ServiceExecutableRunOptions* run_options,
-        std::vector<ExecutionInput> arguments,
-        HloExecutionProfile* hlo_execution_profile) override ;
+  StatusOr<ExecutionOutput> ExecuteAsyncOnStream(
+      const ServiceExecutableRunOptions* run_options,
+      std::vector<ExecutionInput> arguments,
+      HloExecutionProfile* hlo_execution_profile) override;
 
-    // Same as ExecuteOnStream(), but runs this executable on multiple
-    // streams. arguments[i] contains the arguments to the execution on
-    // run_options[i]->stream() and the returned value is at index i of the
-    // returned vector.
-    StatusOr<std::vector<ScopedShapedBuffer>> ExecuteOnStreams(
-        absl::Span<const ServiceExecutableRunOptions> run_options,
-        absl::Span<const absl::Span<const ShapedBuffer* const>> arguments) override;
+  // Same as ExecuteOnStream(), but runs this executable on multiple
+  // streams. arguments[i] contains the arguments to the execution on
+  // run_options[i]->stream() and the returned value is at index i of the
+  // returned vector.
+  StatusOr<std::vector<ScopedShapedBuffer>> ExecuteOnStreams(
+      absl::Span<const ServiceExecutableRunOptions> run_options,
+      absl::Span<const absl::Span<const ShapedBuffer* const>> arguments)
+      override;
 
-private:
-    std::unique_ptr<BaseVisitor> visitor_;
-    VsiExecutor *executor_;
+  StatusOr<ExecutionOutput> HandleWithoutComputeGraph(
+      HloInstruction* root_instr, ScopedShapedBuffer& result_buffers);
+
+ private:
+  std::unique_ptr<BaseVisitor> visitor_;
+  VsiExecutor* executor_;
 };
 
-} // namespace vsiplugin
-} // namespace xla
+}  // namespace vsiplugin
+}  // namespace xla
 #endif
